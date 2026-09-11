@@ -37,6 +37,7 @@ quote-style = "double"
 [tool.ty.environment]
 python-version = "3.14"
 root = ["./src"]
+python = "./.venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

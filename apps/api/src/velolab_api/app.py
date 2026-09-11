@@ -3,6 +3,6 @@ from fastapi import FastAPI
 app = FastAPI(title="velolab-api")
 
 
-@app.get("/health")
+@app.get(path="/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
