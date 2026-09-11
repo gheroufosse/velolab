@@ -11,7 +11,7 @@ ends in something runnable. Stages are not started in parallel.
 - [x] Working agreements recorded
 - [x] Monorepo skeleton: `apps/api`, `apps/web`, `infra/`
 - [x] Python project via `uv`, with `ruff` and `ty` configured
-- [ ] CI running lint, type check and tests on pull requests
+- [x] CI running lint, type check and tests on pull requests
 
 **Learning focus.** GitHub pull request flow, GitHub Actions, monorepo layout.
 
