@@ -66,9 +66,7 @@ jobs:
 
   web:
     needs: changes
-    # apps/web has no package.json until Stage 3. Until then, skip rather
-    # than fail when this workflow file itself changes.
-    if: needs.changes.outputs.web == 'true' && hashFiles('apps/web/package-lock.json') != ''
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -76,21 +74,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # apps/web has no package.json until Stage 3. Until then, skip the
+      # rest of this job rather than fail when this workflow file itself
+      # changes (job-level `if:` runs before checkout, so it can't test
+      # for the lockfile directly — hence this step-level guard).
+      - name: Check if frontend is scaffolded
+        id: scaffolded
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.scaffolded.outputs.ready == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
       - run: npm ci
+        if: steps.scaffolded.outputs.ready == 'true'
 
       - name: Type check
+        if: steps.scaffolded.outputs.ready == 'true'
         run: npx tsc --noEmit
 
       - name: Lint
+        if: steps.scaffolded.outputs.ready == 'true'
         run: npm run lint
 
       - name: Tests
+        if: steps.scaffolded.outputs.ready == 'true'
         run: npm test
 
   # Always-green aggregate check. Branch protection requires this one job,
