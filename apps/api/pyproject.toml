@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "velolab FastAPI backend"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
+]
 
 [project.scripts]
 velolab-api = "velolab_api:main"
@@ -15,6 +18,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.16.7",
     "ty>=0.0.80",
