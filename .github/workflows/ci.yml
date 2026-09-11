@@ -66,7 +66,9 @@ jobs:
 
   web:
     needs: changes
-    if: needs.changes.outputs.web == 'true'
+    # apps/web has no package.json until Stage 3. Until then, skip rather
+    # than fail when this workflow file itself changes.
+    if: needs.changes.outputs.web == 'true' && hashFiles('apps/web/package-lock.json') != ''
     runs-on: ubuntu-latest
     defaults:
       run:
