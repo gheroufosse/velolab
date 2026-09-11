@@ -9,8 +9,8 @@ ends in something runnable. Stages are not started in parallel.
 
 - [x] Decisions recorded
 - [x] Working agreements recorded
-- [ ] Monorepo skeleton: `apps/api`, `apps/web`, `infra/`
-- [ ] Python project via `uv`, with `ruff` and `ty` configured
+- [x] Monorepo skeleton: `apps/api`, `apps/web`, `infra/`
+- [x] Python project via `uv`, with `ruff` and `ty` configured
 - [ ] CI running lint, type check and tests on pull requests
 
 **Learning focus.** GitHub pull request flow, GitHub Actions, monorepo layout.
