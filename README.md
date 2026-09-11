@@ -10,7 +10,8 @@ LAN-reachable one and eventually a VPS deployment.
 
 ## Status
 
-Planning complete, implementation not started. See [docs/roadmap.md](docs/roadmap.md).
+Stage 0 in progress: monorepo skeleton and Python tooling in place. See
+[docs/roadmap.md](docs/roadmap.md).
 
 ## What it does (target v1)
 
