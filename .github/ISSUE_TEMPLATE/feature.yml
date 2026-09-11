@@ -1,0 +1,37 @@
+name: Feature
+description: Something the app should be able to do
+labels: ["type:feature"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [api, web, infra, sync, auth]
+    validations:
+      required: true
+
+  - type: input
+    id: stage
+    attributes:
+      label: Roadmap stage
+      description: Which stage in docs/roadmap.md does this belong to?
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing today? Describe the real usage moment.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should exist instead?
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Observable condition that ends this work.
