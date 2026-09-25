@@ -20,7 +20,7 @@ ends in something runnable. Stages are not started in parallel.
 ## Stage 1 — Backend foundation
 
 - [x] FastAPI application skeleton with health endpoint
-- [ ] Postgres running in Docker
+- [x] Postgres running in Docker
 - [ ] SQLAlchemy 2 models: `users`, `user_integrations`
 - [ ] Alembic migrations wired up
 - [ ] Registration and login

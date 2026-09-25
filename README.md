@@ -58,16 +58,25 @@ uv run velolab-api
 ```
 
 `GET http://127.0.0.1:8000/health` returns `{"status":"ok"}`.
-Postgres, nginx and frontend are not set up yet. Planned local workflow (hybrid):
 
-- Postgres and nginx run in Docker
-- FastAPI and Vite run natively with hot reload
-- Full Compose run used to verify before pushing
+Postgres runs separately in Docker. From the repository root, follow the
+[Postgres setup and verification instructions](infra/README.md#start-postgres)
+to create a private `.env` and start it:
+
+```sh
+docker compose --env-file .env -f infra/compose/compose.yaml up -d --wait
+```
+
+It listens only on `127.0.0.1:5434` and retains data in a named Docker volume.
+The API is **not connected** to Postgres yet. nginx and the frontend are not
+set up; the full Compose stack is planned for Stage 7.
 
 ## Secrets
 
-The intervals.icu API key is a secret. It lives in a local `.env` file or
-Docker secrets, is never committed, and is never sent to the browser.
+The local root `.env` holds the Postgres password and is git-ignored;
+[`.env.example`](.env.example) contains placeholders only. Never commit
+credentials. The intervals.icu API key will also remain server-side when that
+integration is built; it must never reach the browser.
 
 ## Contributing
 
