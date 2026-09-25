@@ -1,2 +1,5 @@
+import uvicorn
+
+
 def main() -> None:
-    print("Hello from velolab-api!")
+    uvicorn.run("velolab_api.app:app", host="127.0.0.1", port=8000, reload=True)

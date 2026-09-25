@@ -19,7 +19,7 @@ ends in something runnable. Stages are not started in parallel.
 
 ## Stage 1 — Backend foundation
 
-- [ ] FastAPI application skeleton with health endpoint
+- [x] FastAPI application skeleton with health endpoint
 - [ ] Postgres running in Docker
 - [ ] SQLAlchemy 2 models: `users`, `user_integrations`
 - [ ] Alembic migrations wired up

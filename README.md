@@ -10,8 +10,8 @@ LAN-reachable one and eventually a VPS deployment.
 
 ## Status
 
-Stage 0 in progress: monorepo skeleton and Python tooling in place. See
-[docs/roadmap.md](docs/roadmap.md).
+Stage 0 complete; Stage 1 backend foundation in progress. FastAPI health endpoint
+is available. See [docs/roadmap.md](docs/roadmap.md).
 
 ## What it does (target v1)
 
@@ -50,7 +50,15 @@ docs/           decisions, roadmap, working agreements
 
 ## Development
 
-Not yet runnable. Planned local workflow (hybrid):
+API runs locally with Python 3.14 and `uv`:
+
+```sh
+cd apps/api
+uv run velolab-api
+```
+
+`GET http://127.0.0.1:8000/health` returns `{"status":"ok"}`.
+Postgres, nginx and frontend are not set up yet. Planned local workflow (hybrid):
 
 - Postgres and nginx run in Docker
 - FastAPI and Vite run natively with hot reload
