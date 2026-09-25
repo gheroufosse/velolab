@@ -9,11 +9,12 @@ From `apps/api`:
 ```
 uv sync
 uv run velolab-api          # dev server with reload, http://localhost:8000
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check
-uv run pytest
 ```
+
+Run `./scripts/check.sh` from the repository root for API lint, formatting
+check, type check and pytest (or call it by absolute path from anywhere).
+It does not start services; pytest skips the database integration test unless
+`VELOLAB_TEST_DATABASE=1` is set.
 
 ## Database scaffold (Stage 1)
 
@@ -42,6 +43,7 @@ With the local Postgres from `infra/README.md` running, use
 `uv run alembic upgrade head` to apply revisions to a **known empty or
 previously migrated** local database. Inspect an existing database before
 migrating it; never reset a volume to make a migration work. For the constraint
-integration test, run `env VELOLAB_TEST_DATABASE=1 uv run pytest` from `apps/api`.
+integration test, run `VELOLAB_TEST_DATABASE=1 ./scripts/check.sh` from the
+repository root (or `env VELOLAB_TEST_DATABASE=1 uv run pytest` from `apps/api`).
 The opt-in test needs permission to create/drop a disposable database on that
 Postgres server; it does not alter tables in the configured development DB.
