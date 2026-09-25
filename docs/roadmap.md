@@ -21,8 +21,8 @@ ends in something runnable. Stages are not started in parallel.
 
 - [x] FastAPI application skeleton with health endpoint
 - [x] Postgres running in Docker
-- [ ] SQLAlchemy 2 models: `users`, `user_integrations`
-- [ ] Alembic migrations wired up
+- [x] SQLAlchemy 2 models: `users`, `user_integrations`
+- [x] Alembic migrations wired up
 - [ ] Registration and login
 - [ ] JWT issuance, refresh endpoint, protected route dependency
 

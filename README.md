@@ -68,8 +68,11 @@ docker compose --env-file .env -f infra/compose/compose.yaml up -d --wait
 ```
 
 It listens only on `127.0.0.1:5434` and retains data in a named Docker volume.
-The API is **not connected** to Postgres yet. nginx and the frontend are not
-set up; the full Compose stack is planned for Stage 7.
+The API now has database/session plumbing, `User` and `UserIntegration` models,
+and an initial Alembic migration; `/health` still works without database configuration.
+See [the API database scaffold notes](apps/api/README.md#database-scaffold-stage-1)
+for session and migration conventions. nginx and the frontend are not set up;
+the full Compose stack is planned for Stage 7.
 
 ## Secrets
 
