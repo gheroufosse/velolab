@@ -56,5 +56,10 @@ native with hot reload. Verify with the full Compose stack before pushing.
 
 ## Commands
 
-Filled in as the project grows. Currently none — no application code exists
-yet.
+Run `./scripts/check.sh` from the repository root (or by absolute path from
+any directory) for API lint, formatting check, type check and tests. By
+default, the database integration test is skipped; the script does not start
+Postgres. To include it, start local Postgres as described in `infra/README.md`
+and run `VELOLAB_TEST_DATABASE=1 ./scripts/check.sh` with the database settings
+in the root `.env`. The test creates and drops a disposable database, not the
+development database.
