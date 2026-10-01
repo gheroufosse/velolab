@@ -1,0 +1,28 @@
+name: velolab-test
+
+services:
+  test-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: velolab_test_bootstrap
+      POSTGRES_DB: velolab_test_admin
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_BOOTSTRAP_PASSWORD:?Set a separate test bootstrap password}
+      TEST_POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set a separate test runner password}
+    ports:
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-5435}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+    volumes:
+      - ./init.sh:/docker-entrypoint-initdb.d/10-test-role.sh:ro
+    networks:
+      - test-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U velolab_test_runner -d velolab_test_admin"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+networks:
+  # A regular isolated project network is needed for host port publication.
+  # Docker suppresses published ports on an internal-only network.
+  test-only: {}

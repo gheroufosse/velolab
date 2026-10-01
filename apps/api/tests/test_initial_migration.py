@@ -1,8 +1,8 @@
 """Exercise the initial migration in a disposable Postgres database.
 
-Opt in with VELOLAB_TEST_DATABASE=1 when the local Compose DB is running. Each
-run creates and drops its own randomly named database; it never migrates or
-clears tables in the configured development database.
+Opt in with VELOLAB_TEST_DATABASE=1 and explicit TEST_POSTGRES_* configuration
+for infra/test-db. Each run creates and drops its own randomly named database;
+it never uses application credentials or the real-use database.
 
 Failure inventory: missing/wrong columns or stale model metadata (schema drift),
 duplicate emails or provider links, orphan links and missing DB-level cascade,
@@ -12,57 +12,17 @@ Auth, encryption, retries, concurrency and external services are not part of
 this schema slice.
 """
 
-import os
-from collections.abc import Generator
 from datetime import datetime
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from velolab_api.models import User, UserIntegration
-from velolab_api.settings import Settings, get_settings
-
-ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
-
-
-@pytest.fixture
-def isolated_database(monkeypatch: pytest.MonkeyPatch) -> Generator[tuple[Config, Engine]]:
-    if os.environ.get("VELOLAB_TEST_DATABASE") != "1":
-        pytest.skip("set VELOLAB_TEST_DATABASE=1 to run against local Postgres")
-
-    # Only use the configured database to issue CREATE/DROP DATABASE. Never
-    # apply migrations or test inserts to it.
-    get_settings.cache_clear()
-    settings: Settings = get_settings()
-    if settings.postgres_host not in {"127.0.0.1", "localhost"}:
-        pytest.fail("database integration tests require a local Postgres host")
-    database_name = f"velolab_test_{uuid4().hex}"
-    admin_engine: Engine = create_engine(settings.database_url, isolation_level="AUTOCOMMIT")
-    try:
-        with admin_engine.connect() as connection:
-            connection.execute(text(f'CREATE DATABASE "{database_name}"'))
-        try:
-            with monkeypatch.context() as environment:
-                environment.setenv("POSTGRES_DB", database_name)
-                get_settings.cache_clear()
-                test_engine = create_engine(get_settings().database_url)
-                try:
-                    yield Config(str(ALEMBIC_INI)), test_engine
-                finally:
-                    test_engine.dispose()
-        finally:
-            get_settings.cache_clear()
-            with admin_engine.connect() as connection:
-                connection.execute(text(f'DROP DATABASE "{database_name}"'))
-    finally:
-        admin_engine.dispose()
-        get_settings.cache_clear()
 
 
 def test_initial_migration_matches_models_and_enforces_ownership(

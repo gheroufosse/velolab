@@ -18,6 +18,9 @@ jobs:
   # run frontend jobs and vice versa.
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       api: ${{ steps.filter.outputs.api }}
       web: ${{ steps.filter.outputs.web }}
@@ -29,6 +32,8 @@ jobs:
           filters: |
             api:
               - 'apps/api/**'
+              - 'scripts/check.sh'
+              - 'infra/test-db/**'
               - '.github/workflows/ci.yml'
             web:
               - 'apps/web/**'
@@ -38,9 +43,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/api
+    env:
+      TEST_DB_PROJECT: velolab-test-${{ github.run_id }}-${{ github.run_attempt }}
+      TEST_POSTGRES_HOST: 127.0.0.1
+      TEST_POSTGRES_PORT: '5435'
+      TEST_POSTGRES_USER: velolab_test_runner
+      TEST_POSTGRES_DB: velolab_test_admin
     steps:
       - uses: actions/checkout@v7
 
@@ -50,19 +58,42 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        working-directory: apps/api
+        run: uv sync --locked --all-extras --dev
 
-      - name: Lint
-        run: uv run ruff check .
+      - name: Generate disposable database credentials
+        id: credentials
+        run: |
+          bootstrap=$(openssl rand -hex 32)
+          runner=$(openssl rand -hex 32)
+          while [ "$runner" = "$bootstrap" ]; do runner=$(openssl rand -hex 32); done
+          echo "::add-mask::$bootstrap"
+          echo "::add-mask::$runner"
+          printf 'bootstrap=%s\nrunner=%s\n' "$bootstrap" "$runner" >> "$GITHUB_OUTPUT"
 
-      - name: Format check
-        run: uv run ruff format --check .
+      - name: Start disposable PostgreSQL
+        env:
+          TEST_POSTGRES_BOOTSTRAP_PASSWORD: ${{ steps.credentials.outputs.bootstrap }}
+          TEST_POSTGRES_PASSWORD: ${{ steps.credentials.outputs.runner }}
+        run: |
+          timeout 300s docker compose --env-file /dev/null -p "$TEST_DB_PROJECT" \
+            -f infra/test-db/compose.yaml up -d --wait --wait-timeout 120
 
-      - name: Type check
-        run: uv run ty check
+      - name: API checks (including PostgreSQL integration tests)
+        env:
+          VELOLAB_TEST_DATABASE: '1'
+          TEST_POSTGRES_PASSWORD: ${{ steps.credentials.outputs.runner }}
+        run: ./scripts/check.sh
 
-      - name: Tests
-        run: uv run pytest
+      - name: Discard disposable PostgreSQL
+        if: always()
+        env:
+          # down interpolates these values but does not authenticate with them.
+          TEST_POSTGRES_BOOTSTRAP_PASSWORD: unused
+          TEST_POSTGRES_PASSWORD: unused
+        run: |
+          docker compose --env-file /dev/null -p "$TEST_DB_PROJECT" \
+            -f infra/test-db/compose.yaml down --volumes --remove-orphans
 
   web:
     needs: changes
@@ -109,17 +140,28 @@ jobs:
         if: steps.scaffolded.outputs.ready == 'true'
         run: npm test
 
-  # Always-green aggregate check. Branch protection requires this one job,
-  # so skipped path-filtered jobs do not block a merge.
+  # Stable branch-protection check; only jobs skipped by path filtering may pass.
   ci:
-    needs: [api, web]
+    needs: [changes, api, web]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any required job failed
+      - name: Verify required jobs
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          API_RESULT: ${{ needs.api.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+          API_CHANGED: ${{ needs.changes.outputs.api }}
+          WEB_CHANGED: ${{ needs.changes.outputs.web }}
         run: |
-          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ]; then
-            echo "A CI job failed."
+          if [ "$CHANGES_RESULT" != success ] || \
+             { [ "$API_CHANGED" != true ] && [ "$API_CHANGED" != false ]; } || \
+             { [ "$WEB_CHANGED" != true ] && [ "$WEB_CHANGED" != false ]; } || \
+             { [ "$API_CHANGED" = true ] && [ "$API_RESULT" != success ]; } || \
+             { [ "$API_CHANGED" = false ] && [ "$API_RESULT" != skipped ]; } || \
+             { [ "$WEB_CHANGED" = true ] && [ "$WEB_RESULT" != success ]; } || \
+             { [ "$WEB_CHANGED" = false ] && [ "$WEB_RESULT" != skipped ]; }; then
+            echo "Unexpected CI results: changes=$CHANGES_RESULT api=$API_RESULT web=$WEB_RESULT"
             exit 1
           fi
           echo "CI passed."

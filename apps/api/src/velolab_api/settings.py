@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     postgres_password: SecretStr
     postgres_host: str = "127.0.0.1"
     postgres_port: int = Field(default=5434, ge=1, le=65535)
+    # Optional so health and the private provisioning CLI need no signing key.
+    # Auth checks the UTF-8 byte length before using it; there is no default key.
+    auth_jwt_secret: SecretStr | None = None
 
     @property
     def database_url(self) -> URL:
