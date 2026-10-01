@@ -23,11 +23,26 @@ ends in something runnable. Stages are not started in parallel.
 - [x] Postgres running in Docker
 - [x] SQLAlchemy 2 models: `users`, `user_integrations`
 - [x] Alembic migrations wired up
-- [ ] Registration and login
+- [x] Private owner provisioning (no public registration) and JSON login
+  implemented and verified on disposable PostgreSQL — ADR-018/020
 - [ ] JWT issuance, refresh endpoint, protected route dependency
+  - [x] Access-token issuance (10-minute HS256), dependency and `GET /auth/me`,
+    verified on disposable PostgreSQL
+  - [ ] Refresh endpoint/cookie and policy; ADR-006 remains the target design
+
+**Current status.** The provisioning/login/access-token slice is complete;
+refresh, logout and UI were excluded. The latest fresh disposable PostgreSQL 17
+full check passed with 83 tests, no skips, and lint/format/type checks passing.
+It verified migrations, persistence, provisioning concurrency, login/protected
+identity, invalid credentials and cleanup. Login validation now also redacts
+credentials under mounted/proxy path prefixes. Codex auth review reported no
+material findings. CI now opts into disposable PostgreSQL tests and rejects
+failed, cancelled or unexpectedly skipped required jobs. GitHub verification
+is tracked on the slice's pull request; local verification alone is not CI
+sign-off. Stage 1 is still incomplete pending refresh.
 
 **Done when.** A user can log in and call a protected endpoint, verified by
-integration tests.
+integration tests, and the remaining Stage 1 refresh work is complete.
 
 **Learning focus.** SQLAlchemy 2 typed models, migrations, JWT mechanics,
 FastAPI dependency injection.

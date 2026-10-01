@@ -238,7 +238,10 @@ sync concurrently.
 
 **Decision.** Daily development runs Postgres and nginx in Docker while FastAPI
 and Vite run natively with hot reload. The full Compose stack is run to verify
-changes before pushing.
+changes before pushing. ADR-019 clarifies that the app database is real-use,
+not a third development/QA environment; integration tests use a separate
+disposable PostgreSQL instance. Commands touching real-use/production require
+explicit user approval, including full-stack verification.
 
 **Why.** Native processes give the fastest edit-reload cycle; the Compose run
 catches the container and proxy problems that hybrid mode hides.
@@ -276,6 +279,109 @@ Features are built one at a time, not generated wholesale.
 
 **Why.** Learning is a primary goal of the project. Generated code that is not
 understood defeats the purpose.
+
+---
+
+## ADR-018 — Private owner provisioning and credential policy
+
+**Decision.** Stage 1 creates accounts through a local, interactive provisioning
+CLI, not an HTTP registration endpoint. There is no public signup. Email is
+validated with `email-validator`, stripped of surrounding whitespace, and
+lowercased across the *whole address* as an intentional identity policy; an
+existing normalized address is rejected, never overwritten. Passwords are
+entered with a hidden prompt and confirmation, never a command-line password
+argument; accept 10–128 characters without trimming, composition requirements,
+or restrictions on spaces or Unicode. Hash passwords using Argon2id via
+`argon2-cffi`, never plaintext. The access-token lifetime for the later JWT
+slice is **10 minutes**. Refresh-token lifetime and rotation are not decided
+here; ADR-006 still governs token storage.
+
+**Why.** Single-user now and invite-only later does not justify a registration
+API. Explicit identity and password rules keep initial provisioning consistent
+with later login. A short-lived access token supports ADR-006 without placing
+it in persistent browser storage.
+
+**Revisit when.** Invited-friend signup is built or a second origin/client
+requires revisiting credential and token policies.
+
+---
+
+## ADR-019 — Real-use database and disposable PostgreSQL tests
+
+**Decision.** Keep exactly two data environments: real-use/production and a
+separate, disposable **real PostgreSQL** test instance. No third development/QA
+copy. The test instance has its own Compose project, test-only credentials,
+isolated disposable storage (tmpfs), and a distinct loopback-only host port
+(default `127.0.0.1:5435`); it never shares app credentials or production volumes.
+Tests require explicit `TEST_POSTGRES_HOST`, `TEST_POSTGRES_PORT`,
+`TEST_POSTGRES_USER`, `TEST_POSTGRES_PASSWORD` and `TEST_POSTGRES_DB`, with no
+fallback to app `POSTGRES_*` settings or root `.env`. Test startup must also
+avoid Compose's implicit root `.env` loading. See `infra/test-db/README.md`.
+
+**Data policy.** PostgreSQL integration tests use generated fixtures in unique
+databases created and dropped inside the test instance. An optional sanitized
+dump is a manual-only aid, reviewed and imported by the owner, never an automated
+test input. Raw production backups are excluded from test inputs, agent context and
+the repository; real credentials never enter fixtures or sanitized dumps.
+
+**Safety boundary.** Every command against real-use/production requires
+explicit user approval. No enforced agent sandbox is introduced deliberately:
+a host agent remains technically capable of accessing the real-use instance.
+Separate settings, credentials, storage and targeting guards protect against
+accidental misuse, not deliberate host access. Configuration and documentation
+alone are not evidence of live verification; a disposable-instance run must be
+reported before claiming that verification.
+
+**Why.** Real PostgreSQL preserves migration, constraint and concurrency
+semantics without exposing daily-use data to destructive tests. Persistence,
+migration and concurrency verification require real PostgreSQL; fast
+supplemental unit/HTTP tests may use SQLite but do not provide that evidence.
+Two instances provide sufficient separation with less operational overhead.
+
+**Rejected.** Disposable databases on the real-use instance, app-credential
+fallbacks, SQLite as a substitute for PostgreSQL integration verification, a
+third QA environment, and an enforced agent sandbox for this slice.
+
+**Revisit when.** Untrusted automation or multiple operators require an
+actually enforced access boundary.
+
+---
+
+## ADR-020 — Login and access-token-only authentication slice
+
+**Decision.** Implement JSON `POST /auth/login` (email/password) and bearer-
+protected `GET /auth/me`, returning only user `id` and `email`. Login follows
+ADR-018 normalization and Argon2id verification, with a generic credential
+failure. Successful login returns `access_token`, `token_type: "bearer"` and
+`expires_in: 600`; successful auth responses use `Cache-Control: no-store`.
+
+Access tokens use **HS256 only**, with exactly **10 minutes** between integer
+`iat` and `exp` timestamps. Required claims are `sub` (an existing user's UUID),
+`iat`, `exp`, `token_use: "access"`, `iss: "velolab-api"` and
+`aud: "velolab-api"`. Verification checks signature, expiry, issuance time,
+algorithm, purpose, issuer, audience and the exact lifetime before resolving
+the user. `AUTH_JWT_SECRET` is server-only, must be random and at least **32
+UTF-8 bytes**, and has no usable default. Missing/short signing material disables
+auth with HTTP 503, without preventing health checks or private provisioning.
+
+**Scope.** No refresh endpoint/cookie, logout/revocation or UI in this slice.
+ADR-006 remains the target access-in-memory/refresh-in-httpOnly-cookie design;
+this is a partial implementation, not a replacement. Rate limiting and TLS are
+later work required before exposing authentication beyond loopback.
+
+**Why.** A small, owner-authorized domain implementation lets us learn and
+review login, JWT validation and FastAPI dependencies before adding session
+renewal. ADR-017's learning-first goal still applies: explain the implementation,
+not just ship it. Auth security review reported no material findings;
+a fresh disposable PostgreSQL 17 run verified login/protected identity and
+invalid credentials. This completes the access-only slice, not Stage 1;
+refresh remains unimplemented.
+
+**Rejected.** Public registration, form-based OAuth2 login, configurable token
+lifetimes/algorithms and implementing refresh/logout/UI in the same slice.
+
+**Revisit when.** The refresh/session slice starts or authentication is prepared
+for network exposure.
 
 ---
 

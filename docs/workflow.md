@@ -143,11 +143,17 @@ green.
 
 Jobs:
 
-- **api** — `ruff check`, `ruff format --check`, `ty`, `pytest`
+- **api** — `./scripts/check.sh`: `ruff check`, `ruff format --check`, `ty`,
+  `pytest`, with PostgreSQL integration tests enabled against the dedicated
+  disposable test cluster (ADR-019). CI supplies generated test-only credentials,
+  never application credentials.
 - **web** — `tsc --noEmit`, `eslint`, `vitest`
 - **build** — Docker images build cleanly (added at Stage 7)
 
-Path filters keep frontend jobs from running on backend-only changes.
+Path filters keep frontend jobs from running on backend-only changes. API,
+check-script and disposable-database infrastructure changes trigger the API job.
+The stable `ci` gate requires successful path detection and every selected job
+to succeed; only intentional path-filter skips are accepted.
 
 Failing CI is fixed, never bypassed. A flaky test is a bug with its own issue.
 

@@ -21,6 +21,11 @@ Learning is a first-class goal, equal to shipping.
 - **Build together, one piece at a time.** Scaffold infrastructure and
   boilerplate; leave domain logic and React components to the owner unless
   asked otherwise. Review and explain rather than silently rewriting.
+- **Current session authorization.** The owner has authorized assistant
+  implementation of Stage 1 provisioning, database isolation, and the login
+  slice: a 10-minute JWT access token and one protected route. This exception
+  does not remove the learning/explanation policy or authorize refresh/logout;
+  it does not mark Stage 1 complete.
 - **Explain frontend concepts.** The owner is an experienced Python engineer
   and new to JavaScript, TypeScript and React. Do not explain Python basics.
   Do explain browser, bundler, React state and TypeScript type-system concepts
@@ -41,6 +46,13 @@ Learning is a first-class goal, equal to shipping.
   the UI shows the gap rather than interpolating it. HRV and sleep are
   currently absent — see ADR-010.
 - Charts use Apache ECharts.
+- Keep exactly two database environments: real-use/production and a dedicated
+  disposable PostgreSQL test instance (ADR-019). Tests require explicit
+  `TEST_POSTGRES_*` settings; never fall back to root `.env` or app credentials.
+- Commands against real-use/production require explicit user approval,
+  including provisioning, migrations, resets, backups and full-stack checks.
+  The host agent is not sandboxed; these are accidental-misuse safeguards,
+  not an enforced security boundary.
 - Commits follow Conventional Commits; PR titles must be valid Conventional
   Commit subject lines.
 
@@ -52,14 +64,28 @@ Tooling: uv, ruff, ty, pytest.
 Infra: Docker Compose, nginx.
 
 Local development is hybrid: Postgres and nginx in Docker, FastAPI and Vite
-native with hot reload. Verify with the full Compose stack before pushing.
+native with hot reload. Verify with the full Compose stack before pushing,
+with explicit user approval for commands touching real-use/production.
 
 ## Commands
 
 Run `./scripts/check.sh` from the repository root (or by absolute path from
 any directory) for API lint, formatting check, type check and tests. By
-default, the database integration test is skipped; the script does not start
-Postgres. To include it, start local Postgres as described in `infra/README.md`
-and run `VELOLAB_TEST_DATABASE=1 ./scripts/check.sh` with the database settings
-in the root `.env`. The test creates and drops a disposable database, not the
-development database.
+default, database integration tests are skipped; the script does not start
+Postgres. To include them, follow `infra/test-db/README.md` to start the dedicated
+disposable test instance and run `VELOLAB_TEST_DATABASE=1 ./scripts/check.sh`
+with all five explicit `TEST_POSTGRES_*` connection settings. Never use root
+`.env` as a test fallback. Fixtures create and drop unique databases inside
+that test instance; no real-use database or storage is used.
+
+## Testing policy
+
+Optimize for confidence per effort, not coverage percentage. Run relevant
+existing tests and type/lint checks. Add tests for changed behavior and credible
+regressions: normally one regression test for a fix, or a happy path and the
+important failure path for a small feature. Auth, permissions, data loss,
+migrations and concurrency need critical failure-mode coverage. Prefer
+observable behavior; avoid redundant cases, elaborate mocks and new test
+infrastructure without approval. Documentation-only changes need no new tests.
+Never weaken tests to pass. Report checks run, results and unverified risks;
+do not claim live database verification without a real disposable-instance run.

@@ -3,7 +3,7 @@
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import Connection, create_engine, pool
 from sqlalchemy.engine.base import Engine
 
 from velolab_api import models  # noqa: F401  Register mappings before Alembic reads metadata.
@@ -28,14 +28,24 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def migrate_connection(connection: Connection) -> None:
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
+    # Tests supply an explicit disposable target; ownership remains with the caller.
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        migrate_connection(connection)
+        return
+
     # NullPool avoids retaining a connection in this one-shot CLI process.
     engine: Engine = create_engine(get_settings().database_url, poolclass=pool.NullPool)
     try:
         with engine.connect() as connection:
-            context.configure(connection=connection, target_metadata=target_metadata)
-            with context.begin_transaction():
-                context.run_migrations()
+            migrate_connection(connection)
     finally:
         engine.dispose()
 
