@@ -1,6 +1,25 @@
 # Session handoff — Stage 1 provisioning, isolation and access-only login
 
-## Latest autonomous hardening pass
+## Publication and merge handoff
+
+The owner approved committing, publishing and squash-merging this slice after
+GitHub CI passes. The complete diff received independent Codex Standards and
+Spec reviews with no actionable findings; model edits are schema-neutral.
+
+- Pull request: [#10](https://github.com/gheroufosse/velolab/pull/10).
+- GitHub CI [run 36929823129](https://github.com/gheroufosse/velolab/actions/runs/36929823129)
+  passed lint, formatting, types and **83 PostgreSQL-enabled tests, zero skips**
+  on implementation commit `38195ff`. Disposable Compose cleanup also passed.
+- Subsequent edits in this handoff record that verification only. The PR is the
+  source of truth for its final head, merge state and commit.
+- Stage 1 remains incomplete pending the separately scoped refresh/session work.
+  No real account was provisioned and no production commands were performed.
+
+The sections below are historical session snapshots. Their statements about
+uncommitted work or unverified GitHub CI describe those earlier checkpoints,
+not the publication status above.
+
+## Autonomous hardening pass
 
 The owner requested autonomous work with Codex-only subagents. Work stayed in
 Stage 1 and preserved the existing uncommitted provisioning/auth slice; no
