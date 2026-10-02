@@ -33,7 +33,14 @@ tells us which features matter.
 **Rejected.** Plan-and-review in one release — doubles scope before any
 feedback exists.
 
-**Revisit when.** The review dashboard is in daily use and feels complete.
+**Longer-term direction.** Add a contextual chat window for personal coaching
+and training-status discussion. This is not an MVP requirement. Build the
+read-only dashboard first; later coaching should reuse its backend data and
+metric definitions rather than introduce a second interpretation of training.
+No chat infrastructure, model provider or planning engine is selected now.
+
+**Revisit when.** The review dashboard is in daily use and the first useful
+coaching tasks can be specified.
 
 ---
 
@@ -207,6 +214,9 @@ eagerly — large, slow to sync, rarely read.
 ---
 
 ## ADR-012 — Infrastructure sequence: Compose, then LAN, then VPS
+
+**Amended by ADR-023:** TLS and rate limiting are required at the first
+non-loopback authentication exposure, including LAN use; not deferred to VPS.
 
 **Decision.** Everything runs in Docker Compose behind nginx. The app is first
 laptop-only over plain HTTP, then reachable on the local network, then deployed
@@ -382,6 +392,99 @@ lifetimes/algorithms and implementing refresh/logout/UI in the same slice.
 
 **Revisit when.** The refresh/session slice starts or authentication is prepared
 for network exposure.
+
+---
+
+## ADR-022 — Shared training data contract before sync implementation
+
+**Decision.** Stage 2 establishes a backend-owned training data contract shared
+by dashboard APIs and eventual coaching. React formats and visualises values;
+it does not independently define training metrics. A future model explains
+backend results rather than becoming the source of numerical truth.
+
+Before implementing sync, document the provider mapping and these semantics:
+
+- **Identity and provenance.** Domain records retain `user_id`, provider and
+  external identity. Enforce appropriate database uniqueness for activities
+  and daily wellness records. Preserve relevant raw provider payloads and
+  measured/estimated flags; exclude credentials from domain payloads.
+- **Time and units.** Define the athlete's IANA timezone, activity instant versus
+  provider-local date handling, week boundary, units and daily metric alignment.
+  Verify CTL/ATL/TSB dates against source records before claiming source parity.
+  Weekly comparisons explicitly distinguish complete weeks from week-to-date
+  comparisons over equivalent elapsed periods.
+- **Missingness.** Missing, explicit null, zero and estimated values are not
+  interchangeable. Define how partial provider responses update stored fields;
+  do not erase known values merely because a response omitted a field. Preserve
+  genuine upstream clearing of values when the API provides that distinction.
+- **Freshness.** Persist last successful sync separately from attempts/errors.
+  Expose data freshness and incomplete-backfill state to consumers. Cached data
+  remains readable after sync failure but must not appear newly refreshed.
+- **Corrections.** Incremental sync must reconcile edits/deletions of older
+  activities and revised daily metrics, not only append new records. Establish
+  the reconciliation window and historical rescan policy from verified provider
+  behaviour. Never infer deletion from an incomplete or failed listing.
+- **Failure and concurrency.** Define transaction/checkpoint boundaries so retries
+  resume safely and failed work cannot advance the success marker. Serialize or
+  coalesce overlapping sync requests for the same integration; uniqueness alone
+  does not prevent stale concurrent updates.
+
+ADR-007's 24-month backfill and daily automatic throttle remain the MVP policy;
+manual sync bypasses the throttle, not concurrency safeguards. Show last sync
+and the manual action prominently. Revisit refresh frequency if post-ride use
+shows stale data is impairing usefulness; no scheduler or worker is added now.
+
+Training-load models are not direct measurements of physiological readiness.
+Dashboard labels and later coaching must distinguish modelled load, reported
+wellbeing and unavailable evidence. Sparse recovery data must not become an
+unqualified readiness recommendation.
+
+**Why.** Clear ownership, source evidence and correction semantics prevent
+costly data repair and divergent dashboard/coach calculations. Future goals,
+events and conversations can be added without designing their schemas now.
+
+**Verification.** Stage 2 covers reruns, historical corrections, explicit field
+clearing, partial failure/retry, concurrent sync, timezone/week boundaries and
+missing-versus-zero behaviour. Recorded responses must be sanitized; tests use
+the dedicated disposable database, never real-use credentials or storage.
+
+**Revisit when.** A second provider or concrete coaching feature requires
+additional context. Change the contract deliberately, not through UI formulas.
+
+---
+
+## ADR-023 — Integration secrets and first network exposure gates
+
+**Decision.** Before storing a real intervals.icu API key, implement authenticated
+encryption at rest using a maintained cryptography library. Keep encryption
+key material outside the database and repository, separate from JWT signing
+material. Document key backup and rotation/re-encryption procedures. Do not
+silently fall back to plaintext when configuration is missing or invalid.
+The existing `encrypted_api_key` text column is scaffolding, not evidence that
+encryption is implemented. Keys and decrypted values never enter browser
+responses, logs, fixtures or domain payloads. Encryption protects a database-only
+leak; it does not protect against compromise of the running backend.
+
+TLS and basic authentication rate limiting are prerequisites for the first
+non-loopback exposure, including LAN use. Loopback-only HTTP remains permitted
+for local development under ADR-021. Stage 7 must establish browser-trusted TLS
+for the chosen LAN access method, or remain loopback-only until it can. Stage 8
+adds the public domain and VPS certificate/deployment operations, not the first
+transport protection.
+
+Stage 3 must account for ADR-021's deliberate refresh-replay behaviour. Coordinate
+refreshes within and across browser tabs; do not blindly retry an ambiguously
+completed refresh request. Verify simultaneous requests, tab startup, logout,
+expiry and lost refresh responses. If session recovery is unsafe or impossible,
+return to login clearly rather than loop or repeatedly replay a spent cookie.
+This is a frontend integration requirement, not a change to the replay policy.
+
+**Why.** A single-user app still holds sensitive credentials and health-related
+data. These gates close storage and exposure gaps without adding public signup,
+new infrastructure services or an alternative authentication system.
+
+**Revisit when.** Deployment access method, secret management or browser session
+requirements change. Any relaxation of ADR-021 requires a separate decision.
 
 ---
 

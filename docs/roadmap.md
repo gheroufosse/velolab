@@ -3,6 +3,11 @@
 Ordered build sequence. Each stage is built together, explained as it goes, and
 ends in something runnable. Stages are not started in parallel.
 
+The first useful product milestone is Stage 4: a single-user, read-only dashboard
+used for the daily training check. Activity browsing/detail are follow-on work,
+not prerequisites for validating that dashboard. Contextual coaching chat is a
+longer-term goal, not an MVP requirement (ADR-001/022).
+
 ---
 
 ## Stage 0 — Repository foundations
@@ -51,15 +56,27 @@ FastAPI dependency injection.
 
 ## Stage 2 — intervals.icu client and sync
 
+- [ ] Document provider/data contract before implementation: identity, timezone,
+  units, week comparisons, missing/null/zero semantics and metric date alignment
+  (ADR-022)
+- [ ] Implement and verify API-key encryption before storing real integration
+  credentials; document key backup and rotation (ADR-023)
 - [ ] Typed API client with API-key auth
 - [ ] `activities` and `wellness` models
 - [ ] One-shot sync endpoint, 24-month backfill
-- [ ] Incremental and idempotent re-sync
-- [ ] Daily throttle plus manual force
-- [ ] Sync state and error reporting
+- [ ] Incremental and idempotent re-sync, including historical edits/deletions and
+  revised daily metrics; explicit reconciliation/rescan policy
+- [ ] Daily throttle plus manual force; overlapping requests serialized or coalesced
+- [ ] Sync state and error reporting, successful-sync timestamp and incomplete
+  backfill state; failed attempts do not mark cached data fresh
 - [ ] Integration tests against recorded responses
 
-**Done when.** Two consecutive syncs produce no duplicates and no lost updates.
+**Done when.** Reruns produce no duplicates or lost updates. Tests also verify
+historical corrections/deletions, missing versus cleared fields, partial failure
+and retry, concurrent requests and timezone/week-boundary semantics. Incomplete
+responses cannot trigger deletions or incorrectly advance success markers.
+Numerical/date mappings are checked against sanitized provider records, and
+API keys cannot leak through serialization or error reporting.
 
 **Learning focus.** Idempotency, incremental sync, rate limits, external API
 failure handling.
@@ -72,10 +89,13 @@ failure handling.
 - [ ] Tailwind and base design tokens
 - [ ] TanStack Query client, typed API layer
 - [ ] Login screen, in-memory access token, silent refresh
-- [ ] Protected routing
+- [ ] Coordinate refresh across concurrent requests and browser tabs under ADR-021;
+  handle ambiguous network failures without blind token replay (ADR-023)
+- [ ] Protected routing and clear login recovery after expiry/revocation
 
 **Done when.** Logging in from the browser reaches a protected page and
-survives a refresh.
+survives a refresh. Browser checks cover concurrent requests/tab startup,
+logout, expiry and lost refresh responses without refresh loops.
 
 **Learning focus.** React components and state, TypeScript in practice, query
 caching, auth on the client.
@@ -84,11 +104,17 @@ caching, auth on the client.
 
 ## Stage 4 — Dashboard
 
-- [ ] Weekly volume summary with previous-week comparison
+- [ ] Define primary device, daily-check tasks and dashboard visual hierarchy;
+  review composition using real data before expanding screens
+- [ ] Weekly volume summary with explicitly labelled equivalent-period comparison
 - [ ] Fitness/fatigue/form chart (CTL, ATL, TSB)
 - [ ] Ramp rate indicator
 - [ ] Resting HR and weight trends, gaps and estimates marked
-- [ ] Empty and loading states
+- [ ] Last successful sync, manual sync and stale/partial/error states
+- [ ] Distinguish modelled training load from physiological readiness; no implied
+  certainty from missing recovery data
+- [ ] Empty and loading states; responsive layout, keyboard access and chart
+  meaning that does not depend on colour alone
 
 **Done when.** It replaces opening intervals.icu for the daily check.
 
@@ -126,8 +152,10 @@ state, list performance.
 - [ ] Compose stack: api, db, nginx
 - [ ] nginx serves the built frontend and proxies `/api`
 - [ ] Health and readiness checks
-- [ ] Security headers and basic rate limiting
-- [ ] Reachable from another device on the local network
+- [ ] Security headers and basic authentication rate limiting
+- [ ] Browser-trusted TLS before exposing authentication beyond loopback (ADR-023)
+- [ ] Reachable from another device on the local network only after TLS/rate-limit
+  gates are met; otherwise remain loopback-only
 
 **Learning focus.** Docker networking, service discovery, reverse proxy
 routing, internal versus exposed ports.
@@ -137,7 +165,7 @@ routing, internal versus exposed ports.
 ## Stage 8 — VPS deployment
 
 - [ ] Real domain
-- [ ] TLS certificates
+- [ ] Public-domain TLS certificates and renewal; preserve Stage 7's TLS gate
 - [ ] Secrets handling in production
 - [ ] Backups
 - [ ] Deployment procedure
@@ -148,6 +176,11 @@ routing, internal versus exposed ports.
 
 ## Later
 
+- Contextual chat for training-status discussion and personal coaching. First
+  define useful tasks, advisory versus write permissions, athlete context,
+  data/provider privacy, conversation retention, grounded-answer checks and cost
+  limits. Reuse backend metrics and provenance; no chat infrastructure required
+  for the dashboard MVP.
 - Background sync worker, once sync latency justifies it
 - Invited friends: signup flow, per-user integrations, sharing rules
 - Strava and Garmin connectors with OAuth token storage
