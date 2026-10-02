@@ -1,4 +1,75 @@
-# Session handoff — Stage 1 provisioning, isolation and access-only login
+# Session handoff — Stage 1 backend authentication
+
+## Current handoff — refresh/session slice (ADR-021)
+
+The owner explicitly approved the seven-day fixed refresh policy and autonomous
+Codex implementation, disposable PostgreSQL tests and independent review,
+including minimal session-specific logout. `AGENTS.md` records that narrow
+Stage 1 authorization, not standing permission for future domain work.
+
+- Current publication branch: `feat/auth-sessions`, based on the latest `main`
+  after docs PR #12. The owner now explicitly approved committing, pushing,
+  opening a PR and squash-merging the refresh/session slice **only after** its
+  GitHub CI is green. The earlier publication approval below applied only to
+  the already-merged access-only slice. No production operations, Stage 2 work
+  or unrelated PR publication were approved.
+- Docs PR [#12](https://github.com/gheroufosse/velolab/pull/12), clarifying
+  dashboard MVP and future data contracts, merged on 2026-10-02 at 20:14:49 UTC
+  as `0e13d54aefd3754df9cd629d1a78df2c14cc270e`; its three checks passed.
+  This does not publish or verify the uncommitted auth slice.
+- Login now sets an opaque HttpOnly/SameSite=Strict refresh cookie. Only token
+  hashes are stored in new user-owned session/token tables, shipped with
+  Alembic revision `c437ce183e2b`. Refresh rotates tokens under a parent-row lock;
+  spent-token replay revokes only its session. Logout uses the same lock and
+  leaves existing 600-second access JWTs valid until expiry.
+- Configure exact `AUTH_TRUSTED_ORIGIN` and the public `AUTH_COOKIE_PATH`.
+  Login/refresh/logout require that Origin and `X-Velolab-CSRF: 1`. HTTPS sets
+  Secure; insecure cookies are allowed only for configured HTTP loopback origins.
+  Missing/invalid configuration fails closed without blocking health/provisioning.
+- Historical independent PostgreSQL 17 `./scripts/check.sh`: lint, formatting
+  and types passed; **99 tests passed, zero skips**, including migration
+  upgrade/downgrade and refresh/replay/logout concurrency tests. Three warnings:
+  two dependency deprecations and an expected SQLAlchemy identity conflict.
+- Current-session independent verification: non-database lint/format/types passed
+  with 74 tests passed, 25 skipped and two dependency deprecations. A fresh
+  dedicated PostgreSQL 17 full check passed lint/format/types and **99 tests,
+  zero skips**, with three warnings (two dependency deprecations and the expected
+  identity conflict). It covered migration upgrade/downgrade, persistence,
+  provisioning concurrency, replay serialization and refresh/logout races.
+  Loopback `127.0.0.1:5435`, tmpfs, restricted runner and cluster marker were
+  confirmed; zero fixture databases and zero exact-project containers, networks
+  or volumes remained after cleanup. These are local results, not auth GitHub CI
+  or deployment sign-off.
+- Historical verification used distinct generated test-only secrets, explicit
+  `TEST_POSTGRES_*`, a unique Compose project, `--env-file /dev/null`, tmpfs and
+  loopback-only `127.0.0.1:5435`. Zero fixture databases before teardown; zero
+  exact-project containers, networks or volumes afterward.
+- Independent Codex security/spec review approved with no material findings.
+  Standards review requested narrowing the persistent authorization record
+  (addressed) and noted the roughly 400-line PR guideline. This refresh/session
+  PR stays cohesive because splitting origin/CSRF, cookie issuance, rotation,
+  replay and session revocation into intermediate PRs risks publishing incomplete
+  security contracts. Migration and critical concurrency tests stay in the PR.
+- Stage 1 is locally implemented/verified; GitHub CI and merge remain pending.
+  It is not deployment-approved.
+  No frontend/sync, production commands, real account provisioning or new
+  dependencies. GitHub CI for this slice and full Compose/proxy checks remain
+  unperformed. TLS and rate limiting are still required before network exposure.
+
+**Learning notes.** A refresh cookie survives a page reload while an in-memory
+access JWT does not; HttpOnly prevents JavaScript reading the refresh secret.
+SHA-256 is appropriate here because tokens have high random entropy, unlike
+human passwords. Locking a stable parent session serializes operations even as
+individual tokens rotate. Strict replay revocation can force re-login after an
+innocent concurrent refresh; Stage 3 must coordinate refresh requests across tabs.
+
+**Next.** Publish the authorized Stage 1 PR, self-review the exact diff and
+require green GitHub CI (including PostgreSQL and cleanup) before squash merge.
+Then scope Stage 2's intervals.icu client/sync together; do not start UI early.
+Real-use migration/provisioning needs separate explicit approval.
+
+Everything below is historical evidence for the earlier access-only slice;
+old authorization/status statements do not apply to the refresh work above.
 
 ## Publication and merge handoff
 

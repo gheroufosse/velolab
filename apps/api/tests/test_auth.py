@@ -1,20 +1,26 @@
 """Auth contract through HTTP, with real hashing and a disposable SQLAlchemy DB."""
 
 from collections.abc import Generator
-from datetime import UTC, datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta, tzinfo
+from threading import Barrier
 
 import jwt
 import pytest
 from alembic import command
+from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import Response
 from pydantic import SecretStr
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine, event, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from velolab_api import auth
 from velolab_api.app import app
 from velolab_api.db import Base, get_session
+from velolab_api.models import RefreshToken
 from velolab_api.provisioning import provision_user
 from velolab_api.settings import Settings, get_settings
 
@@ -47,12 +53,14 @@ def auth_client(request: pytest.FixtureRequest) -> Generator[TestClient]:
         postgres_db="unused",
         postgres_password="unused",
         auth_jwt_secret=TEST_SECRET,
+        auth_trusted_origin="http://localhost",
     )
     existing_overrides = app.dependency_overrides.copy()
     app.dependency_overrides[get_session] = session_override
     app.dependency_overrides[get_settings] = lambda: settings
     try:
         with TestClient(app) as client:
+            client.headers.update({"Origin": "http://localhost", "X-Velolab-CSRF": "1"})
             yield client
     finally:
         app.dependency_overrides.clear()
@@ -201,9 +209,11 @@ def test_invalid_login_body_does_not_echo_credentials(
         parent = FastAPI()
         parent.mount("/api", app)
         client = TestClient(parent)
+        client.headers.update(auth_client.headers)
         path = "/api/auth/login"
     elif deployment == "root_path":
         client = TestClient(app, root_path="/api")
+        client.headers.update(auth_client.headers)
         path = "/api/auth/login"
     else:
         client = auth_client
@@ -222,6 +232,335 @@ def test_invalid_login_body_does_not_echo_credentials(
         ]
     }
     assert password not in rejected.text
+
+
+@pytest.mark.parametrize("auth_client", ["sqlite", "postgres"], indirect=True)
+def test_refresh_rotates_and_replay_revokes_only_its_session(auth_client: TestClient) -> None:
+    first = auth_client.post(
+        "/auth/login", json={"email": "rider@example.com", "password": PASSWORD}
+    )
+    assert first.status_code == 200
+    original = auth_client.cookies["velolab_refresh"]
+    assert "httponly" in first.headers["set-cookie"].lower()
+    assert "samesite=strict" in first.headers["set-cookie"].lower()
+    assert "secure" not in first.headers["set-cookie"].lower()
+    assert "path=/auth" in first.headers["set-cookie"].lower()
+    independent = auth_client.post(
+        "/auth/login", json={"email": "rider@example.com", "password": PASSWORD}
+    )
+    other = auth_client.cookies["velolab_refresh"]
+    renewed = auth_client.post("/auth/refresh", headers={"Cookie": f"velolab_refresh={original}"})
+    assert renewed.status_code == 200
+    assert set(renewed.json()) == {"access_token", "token_type", "expires_in"}
+    assert renewed.headers["cache-control"] == "no-store"
+    rotated = auth_client.cookies["velolab_refresh"]
+    assert rotated != original
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={original}"}
+        ).status_code
+        == 401
+    )
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={rotated}"}
+        ).status_code
+        == 401
+    )
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={other}"}
+        ).status_code
+        == 200
+    )
+    assert independent.json()["expires_in"] == 600
+
+
+@pytest.mark.parametrize("auth_client", ["sqlite", "postgres"], indirect=True)
+def test_logout_revokes_only_matching_session(auth_client: TestClient) -> None:
+    first_login = auth_client.post(
+        "/auth/login", json={"email": "rider@example.com", "password": PASSWORD}
+    )
+    first = auth_client.cookies["velolab_refresh"]
+    auth_client.post("/auth/login", json={"email": "rider@example.com", "password": PASSWORD})
+    second = auth_client.cookies["velolab_refresh"]
+    logout = auth_client.post("/auth/logout", headers={"Cookie": f"velolab_refresh={first}"})
+    assert logout.status_code == 204
+    assert "max-age=0" in logout.headers["set-cookie"].lower()
+    assert (
+        auth_client.get(
+            "/auth/me", headers={"Authorization": f"Bearer {first_login.json()['access_token']}"}
+        ).status_code
+        == 200
+    )
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={first}"}
+        ).status_code
+        == 401
+    )
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={second}"}
+        ).status_code
+        == 200
+    )
+
+
+def test_csrf_and_unknown_token_do_not_revoke_a_session(auth_client: TestClient) -> None:
+    credentials = {"email": "rider@example.com", "password": PASSWORD}
+    for path in ("/auth/login", "/auth/refresh", "/auth/logout"):
+        for headers in ({"Origin": "https://other.example"}, {"X-Velolab-CSRF": ""}):
+            rejected = auth_client.post(path, json=credentials, headers=headers)
+            assert rejected.status_code == 403
+    auth_client.headers.pop("Origin")
+    assert auth_client.post("/auth/login", json=credentials).status_code == 403
+    auth_client.headers["Origin"] = "http://localhost"
+    assert auth_client.post("/auth/login", json=credentials).status_code == 200
+    actual = auth_client.cookies["velolab_refresh"]
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={'z' * 43}"}
+        ).status_code
+        == 401
+    )
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={actual}"}
+        ).status_code
+        == 200
+    )
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        None,
+        "",
+        "http://example.com",
+        "https://example.com/",
+        "http://localhost.evil",
+        "http://user@localhost",
+        "ftp://localhost",
+    ],
+)
+def test_invalid_origin_configuration_disables_auth_not_health(
+    auth_client: TestClient, origin: str | None
+) -> None:
+    settings = app.dependency_overrides[get_settings]()
+    settings.auth_trusted_origin = origin
+    assert auth_client.get("/health").status_code == 200
+    for path in ("/auth/login", "/auth/refresh", "/auth/logout"):
+        assert (
+            auth_client.post(
+                path, json={"email": "rider@example.com", "password": PASSWORD}
+            ).status_code
+            == 503
+        )
+    assert (
+        auth_client.get("/auth/me", headers={"Authorization": "Bearer invalid"}).status_code == 503
+    )
+
+
+def test_secure_cookie_and_scoped_proxy_path(auth_client: TestClient) -> None:
+    settings = app.dependency_overrides[get_settings]()
+    settings.auth_trusted_origin = "https://rider.example"
+    settings.auth_cookie_path = "/api/auth"
+    auth_client.headers["Origin"] = "https://rider.example"
+    result = auth_client.post(
+        "/auth/login", json={"email": "rider@example.com", "password": PASSWORD}
+    )
+    assert result.status_code == 200
+    assert "secure" in result.headers["set-cookie"].lower()
+    assert "path=/api/auth" in result.headers["set-cookie"].lower()
+    token = result.cookies["velolab_refresh"]
+    refreshed = auth_client.post("/auth/refresh", headers={"Cookie": f"velolab_refresh={token}"})
+    assert refreshed.status_code == 200
+    assert "secure" in refreshed.headers["set-cookie"].lower()
+
+
+def test_absolute_expiry_is_not_extended_by_rotation(
+    auth_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_datetime = datetime
+    offset = 0
+
+    class Clock(real_datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> Clock:
+            current = real_datetime.now(UTC) + timedelta(seconds=offset)
+            return cls.fromtimestamp(current.timestamp(), tz=tz)
+
+    monkeypatch.setattr(auth, "datetime", Clock)
+    assert (
+        auth_client.post(
+            "/auth/login", json={"email": "rider@example.com", "password": PASSWORD}
+        ).status_code
+        == 200
+    )
+    original = auth_client.cookies["velolab_refresh"]
+    offset = 3 * 24 * 60 * 60
+    rotated = auth_client.post("/auth/refresh", headers={"Cookie": f"velolab_refresh={original}"})
+    assert rotated.status_code == 200
+    assert (
+        3 * 24 * 60 * 60
+        < int(rotated.headers["set-cookie"].split("Max-Age=")[1].split(";")[0])
+        <= 4 * 24 * 60 * 60
+    )
+    current = rotated.cookies["velolab_refresh"]
+    offset = 7 * 24 * 60 * 60 + 1
+    assert (
+        auth_client.post(
+            "/auth/refresh", headers={"Cookie": f"velolab_refresh={current}"}
+        ).status_code
+        == 401
+    )
+
+
+@pytest.fixture
+def postgres_http(isolated_database: tuple[Config, Engine]) -> Generator[tuple[TestClient, Engine]]:
+    config, engine = isolated_database
+    command.upgrade(config, "head")
+    with Session(engine) as session:
+        provision_user(session, "rider@example.com", PASSWORD)
+
+    def db_override() -> Generator[Session]:
+        with Session(engine) as session:
+            yield session
+
+    settings = Settings(
+        _env_file=None,
+        postgres_user="unused",
+        postgres_db="unused",
+        postgres_password="unused",
+        auth_jwt_secret=TEST_SECRET,
+        auth_trusted_origin="http://localhost",
+    )
+    previous = app.dependency_overrides.copy()
+    app.dependency_overrides[get_session] = db_override
+    app.dependency_overrides[get_settings] = lambda: settings
+    try:
+        with TestClient(app) as client:
+            client.headers.update({"Origin": "http://localhost", "X-Velolab-CSRF": "1"})
+            yield client, engine
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
+
+
+def test_postgres_rotation_persists_only_hash_and_replay_serializes(
+    postgres_http: tuple[TestClient, Engine],
+) -> None:
+    client, engine = postgres_http
+    assert (
+        client.post(
+            "/auth/login", json={"email": "rider@example.com", "password": PASSWORD}
+        ).status_code
+        == 200
+    )
+    original = client.cookies["velolab_refresh"]
+    with Session(engine) as reader:
+        stored = reader.scalars(select(RefreshToken)).one()
+        assert stored.token_hash != original
+        assert len(stored.token_hash) == 64
+
+    ready = Barrier(2)
+
+    def rendezvous(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        if statement.startswith("SELECT") and "refresh_tokens.token_hash =" in statement:
+            ready.wait(timeout=10)
+
+    event.listen(engine, "before_cursor_execute", rendezvous)
+    try:
+
+        def rotate() -> Response:
+            with TestClient(app) as competitor:
+                return competitor.post(
+                    "/auth/refresh",
+                    headers={
+                        "Origin": "http://localhost",
+                        "X-Velolab-CSRF": "1",
+                        "Cookie": f"velolab_refresh={original}",
+                    },
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(rotate) for _ in range(2)]
+            results = [future.result(timeout=20) for future in futures]
+    finally:
+        event.remove(engine, "before_cursor_execute", rendezvous)
+    assert sorted(response.status_code for response in results) == [200, 401]
+    successor = next(
+        response.cookies["velolab_refresh"] for response in results if response.status_code == 200
+    )
+    assert (
+        client.post("/auth/refresh", headers={"Cookie": f"velolab_refresh={successor}"}).status_code
+        == 401
+    )
+
+
+def test_postgres_logout_and_refresh_race_cannot_leave_live_cookie(
+    postgres_http: tuple[TestClient, Engine],
+) -> None:
+    client, engine = postgres_http
+    assert (
+        client.post(
+            "/auth/login", json={"email": "rider@example.com", "password": PASSWORD}
+        ).status_code
+        == 200
+    )
+    original = client.cookies["velolab_refresh"]
+    ready = Barrier(2)
+
+    def rendezvous(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        if statement.startswith("SELECT") and "refresh_tokens.token_hash =" in statement:
+            ready.wait(timeout=10)
+
+    event.listen(engine, "before_cursor_execute", rendezvous)
+    try:
+
+        def send(path: str) -> Response:
+            with TestClient(app) as competitor:
+                return competitor.post(
+                    path,
+                    headers={
+                        "Origin": "http://localhost",
+                        "X-Velolab-CSRF": "1",
+                        "Cookie": f"velolab_refresh={original}",
+                    },
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            refresh_future = executor.submit(send, "/auth/refresh")
+            logout_future = executor.submit(send, "/auth/logout")
+            refreshed = refresh_future.result(timeout=20)
+            logged_out = logout_future.result(timeout=20)
+    finally:
+        event.remove(engine, "before_cursor_execute", rendezvous)
+    assert logged_out.status_code == 204
+    assert refreshed.status_code in (200, 401)
+    if refreshed.status_code == 200:
+        successor = refreshed.cookies["velolab_refresh"]
+        assert (
+            client.post(
+                "/auth/refresh", headers={"Cookie": f"velolab_refresh={successor}"}
+            ).status_code
+            == 401
+        )
 
 
 def test_other_validation_errors_keep_fastapi_default_response(auth_client: TestClient) -> None:
