@@ -10,17 +10,29 @@ LAN-reachable one and eventually a VPS deployment.
 
 ## Status
 
-Stage 0 complete; Stage 1 backend foundation in progress. FastAPI health endpoint
-is available. See [docs/roadmap.md](docs/roadmap.md).
+Stage 0 complete. Stage 1 backend auth/session implementation is locally
+verified; publication and fresh GitHub CI remain pending. Frontend and sync are
+not implemented yet. See [docs/roadmap.md](docs/roadmap.md) for current status
+and verification boundaries.
 
-## What it does (target v1)
+## Product direction
 
-- **Dashboard** — weekly training volume, fitness/fatigue/form curves, recovery indicators.
-- **Activity list** — fast, filterable, scannable ride history.
-- **Activity detail** — power/HR streams, intervals, zone distribution.
+**First useful milestone: a great single-user, read-only dashboard.** Weekly
+training volume, fitness/fatigue/form curves and honest recovery-data trends,
+with clear visual hierarchy, data freshness and missing/estimated values shown.
+Training-load models describe training history; they do not establish medical
+or physiological readiness.
 
-Single user first, designed so adding a few friends later is incremental
-rather than a rewrite.
+Activity lists and detailed power/HR analysis follow once the dashboard proves
+useful for the daily check. They are not prerequisites for that first milestone.
+
+**Later: contextual chat for personal coaching and training-status discussion.**
+It will reuse the dashboard's backend metrics and source evidence. Coaching,
+workout planning and chat infrastructure are not part of the dashboard MVP;
+their scope and privacy requirements will be decided before implementation.
+
+Single user first, with per-user data ownership from day one. Friend onboarding
+and additional data providers remain deferred.
 
 ## Stack
 
@@ -79,7 +91,10 @@ the full Compose stack is planned for Stage 7.
 The local root `.env` holds the Postgres password and is git-ignored;
 [`.env.example`](.env.example) contains placeholders only. Never commit
 credentials. The intervals.icu API key will also remain server-side when that
-integration is built; it must never reach the browser.
+integration is built; it must never reach the browser. Encryption at rest must
+be implemented before storing a real integration key (ADR-023); the existing
+column name alone does not provide encryption. TLS and authentication rate
+limiting are required before login is exposed beyond loopback, including LAN use.
 
 ## Contributing
 
