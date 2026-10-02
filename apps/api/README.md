@@ -99,10 +99,15 @@ the explicit `TEST_POSTGRES_*` configuration and `VELOLAB_TEST_DATABASE=1` from
 [`infra/test-db/README.md`](../../infra/test-db/README.md); never test provisioning
 against the real-use database.
 
-There is no registration endpoint. Private provisioning and access-only login
-are implemented; Stage 1 is not complete (refresh remains unimplemented).
+There is no registration endpoint. Private provisioning, login and the
+refresh/session slice are implemented. A historical local dedicated PostgreSQL 17
+full check passed 99 tests with zero skips, plus lint, formatting and types (see
+`docs/session-handoff.md`). A current-session dedicated PostgreSQL 17 full check
+also passed 99 tests with zero skips plus lint, formatting and types. The owner
+approved publication of this slice from `feat/auth-sessions`, conditional on
+green GitHub CI before squash merge. Local passes are not CI sign-off.
 
-## Login and protected identity (Stage 1 access-only slice)
+## Authentication and session renewal (Stage 1)
 
 - `POST /auth/login` accepts JSON with `email` and `password`, not an OAuth2
   password form. Email follows the provisioning normalization policy; passwords
@@ -133,16 +138,40 @@ and `exp` exactly 600 seconds apart, `token_use: "access"`,
 algorithm, expiration, issuance time, purpose, issuer, audience and exact lifetime
 before resolving the user. See ADR-020.
 
-No refresh cookie/endpoint, logout/revocation or UI is included. A token expires
-rather than being renewed or explicitly revoked. Refresh lifetime/rotation and
-logout policy remain undecided; ADR-006 remains the target refresh design.
+`POST /auth/login`, `POST /auth/refresh` and `POST /auth/logout` require an
+exact `Origin` matching server-side `AUTH_TRUSTED_ORIGIN` and the custom header
+`X-Velolab-CSRF: 1`. This is required even for native API clients; it is not a
+credentialed CORS setup. Missing or malformed trusted origin disables all auth
+routes with HTTP 503 but does not block `/health` or the private provisioning
+CLI. Configure a canonical origin with no trailing slash or path, e.g.
+`http://localhost:5173` for local HTTP or `https://velolab.example` for HTTPS.
+Only explicitly configured HTTP **loopback** origins are accepted; `https`
+sets Secure on the cookie. The server never infers cookie security from request
+or forwarded headers. The browser frontend is not built yet and must later
+keep the access JWT in memory, never persistent browser storage.
+
+Login also sets a host-only `velolab_refresh` HttpOnly SameSite=Strict cookie.
+The default cookie path is `/auth`; set `AUTH_COOKIE_PATH=/api/auth` if nginx
+publishes the API under `/api`, so the browser sends the cookie on both refresh
+and logout. Cookie deletion uses the same configured path. `POST /auth/refresh`
+reads only that cookie, rotates it and returns the unchanged access-token JSON
+contract with `Cache-Control: no-store`. Refresh values are random opaque
+secrets: only SHA-256 digests are persisted. Session expiry is fixed at seven
+days after login, **not** extended by rotation. Reusing an old digest revokes
+that session, even when two innocent requests race; unknown cookies fail without
+revoking other sessions. `POST /auth/logout` revokes only the matching session,
+clears its cookie and returns 204. A recognized spent cookie can still log out
+a session after a concurrent refresh. Existing access JWTs remain valid until
+their 10-minute expiry; this is not global logout or access-token blacklisting.
+No CORS middleware, frontend, signup, rate limiting or deployment is added.
 Rate limiting and TLS are required before exposing authentication beyond
 loopback. A successful local check is not deployment/security sign-off.
 
 Fast HTTP tests cover the contract with real hashing and SQLite fixtures; they
 are supplemental, not evidence of PostgreSQL persistence or concurrency.
-Opt-in tests also verify login/protected identity and invalid credentials
-against migrated disposable PostgreSQL. The API CI job uses that same dedicated
+Opt-in tests also verify login/protected identity, refresh persistence/replay,
+logout and concurrent PostgreSQL row-lock behavior against migrated disposable
+PostgreSQL. The API CI job uses that same dedicated
 Compose definition and opts into PostgreSQL tests, rather than silently skipping
 them. Use only the dedicated instance and explicit test settings described above
 for integration checks. See `docs/session-handoff.md` at the repository root for

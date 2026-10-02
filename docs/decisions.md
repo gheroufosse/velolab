@@ -395,6 +395,47 @@ for network exposure.
 
 ---
 
+## ADR-021 — Rotating, session-scoped refresh cookies
+
+**Decision.** Continue ADR-006/020 without changing access JWTs or the login/me
+JSON contract. Login creates a per-user database session with an absolute
+seven-day expiry and sends a cryptographically random opaque refresh token as a
+host-only HttpOnly SameSite=Strict cookie. Only its SHA-256 digest is persisted;
+the raw token never appears in models, persistence, logs or error messages.
+Every successful refresh atomically spends the previous digest and issues a new
+cookie plus the same 600-second access JWT. Spent digests remain until their
+session expires: replay revokes that session (including innocent concurrent
+reuse), not other sessions. Unknown tokens cannot revoke sessions. PostgreSQL
+locks the parent session row during refresh/logout so rotations, replays and
+logout serialize. Logout revokes only the cookie's session and clears the cookie;
+previously issued access JWTs remain valid until their normal expiry. Expired
+session rows and token digests can be pruned in later maintenance work, never
+before expiry where replay detection matters.
+
+**Browser boundary.** Login, refresh and logout require the exact configured
+trusted `Origin` and `X-Velolab-CSRF: 1`; there is no credentialed CORS. No
+trusted origin (or an invalid one) disables auth with HTTP 503, without blocking
+health or private provisioning. Cookie `Secure` is chosen exclusively from the
+configured origin: HTTPS is secure; HTTP is permitted only for an explicitly
+configured loopback origin. Do not select this flag from request/forwarded
+headers. Cookie path is explicitly configured for the public API prefix
+(`/auth` direct, `/api/auth` behind the future proxy). TLS and rate limiting
+remain prerequisites for exposing auth beyond loopback. No browser storage/UI,
+global logout, access-token blacklist or rate limiting is part of this slice.
+
+**Why.** Hashed opaque values reduce database-leak utility; a stable parent
+row is the serialization point even as token rows rotate. An absolute expiry
+limits stolen-session lifetime and replay revocation bounds the damage of
+reuse. The explicit origin and non-simple custom header protect cookie-writing
+requests against cross-site form requests, without opening CORS. These controls
+do not replace TLS or rate limiting.
+
+**Revisit when.** A second origin/client, production proxy or session management
+UI is needed. ADR-020 records the prior access-only slice as historical evidence,
+not the current completed refresh scope.
+
+---
+
 ## ADR-022 — Shared training data contract before sync implementation
 
 **Decision.** Stage 2 establishes a backend-owned training data contract shared

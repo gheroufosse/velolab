@@ -30,21 +30,32 @@ longer-term goal, not an MVP requirement (ADR-001/022).
 - [x] Alembic migrations wired up
 - [x] Private owner provisioning (no public registration) and JSON login
   implemented and verified on disposable PostgreSQL — ADR-018/020
-- [ ] JWT issuance, refresh endpoint, protected route dependency
+- [x] JWT issuance, refresh endpoint, protected route dependency
   - [x] Access-token issuance (10-minute HS256), dependency and `GET /auth/me`,
     verified on disposable PostgreSQL
-  - [ ] Refresh endpoint/cookie and policy; ADR-006 remains the target design
+  - [x] Refresh endpoint/cookie, rotation/replay policy and session-specific logout
+    implemented and verified on disposable PostgreSQL (ADR-021)
 
-**Current status.** The provisioning/login/access-token slice is complete;
-refresh, logout and UI were excluded. The latest fresh disposable PostgreSQL 17
-full check passed with 83 tests, no skips, and lint/format/type checks passing.
-It verified migrations, persistence, provisioning concurrency, login/protected
-identity, invalid credentials and cleanup. Login validation now also redacts
-credentials under mounted/proxy path prefixes. Codex auth review reported no
-material findings. CI now opts into disposable PostgreSQL tests and rejects
-failed, cancelled or unexpectedly skipped required jobs. GitHub verification
-is tracked on the slice's pull request; local verification alone is not CI
-sign-off. Stage 1 is still incomplete pending refresh.
+**Current status.** Stage 1 backend implementation is complete and locally
+verified. A previous dedicated PostgreSQL 17 full check passed lint,
+formatting, types and **99 tests, zero skips**, including migration
+upgrade/downgrade, persistence, refresh/replay and concurrent refresh/logout
+behavior. Zero fixture databases remained and the disposable project's resources
+were removed. Independent Codex security/spec review found no material issues.
+Login validation continues to redact credentials under mounted/proxy path
+prefixes. The auth slice is being published from `feat/auth-sessions`, based on
+the latest `main`; the owner approved commit, push, PR and squash merge only after
+green GitHub CI. Current-session independent verification also passed a fresh
+dedicated PostgreSQL 17 full check (99 tests, zero skips, plus lint/format/types;
+see `docs/session-handoff.md`). Auth PR [#13](https://github.com/gheroufosse/velolab/pull/13)
+passed GitHub CI [run 37060343473](https://github.com/gheroufosse/velolab/actions/runs/37060343473)
+on head `fc34c343263f12cd57330b0116cdf6ee224a825e`: API lint/format/types,
+99 PostgreSQL-enabled tests with zero skips, disposable cleanup and the stable
+`ci` gate passed; the web job was intentionally path-filtered. Merge remains
+pending; CI and local verification are not deployment sign-off. No real-use
+migration/account provisioning was performed. CI opts into disposable PostgreSQL tests and rejects
+failed, cancelled or unexpectedly skipped required jobs. Next build stage is
+Stage 2 sync; UI remains Stage 3.
 
 **Done when.** A user can log in and call a protected endpoint, verified by
 integration tests, and the remaining Stage 1 refresh work is complete.

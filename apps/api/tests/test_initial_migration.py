@@ -12,7 +12,7 @@ Auth, encryption, retries, concurrency and external services are not part of
 this schema slice.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -22,7 +22,7 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from velolab_api.models import User, UserIntegration
+from velolab_api.models import AuthSession, RefreshToken, User, UserIntegration
 
 
 def test_initial_migration_matches_models_and_enforces_ownership(
@@ -104,9 +104,30 @@ def test_initial_migration_matches_models_and_enforces_ownership(
             )
             session.flush()
 
+        owner_session = AuthSession(
+            user_id=rider.id, expires_at=datetime.now(UTC) + timedelta(days=7)
+        )
+        session.add(owner_session)
+        session.flush()
+        token = RefreshToken(user_id=rider.id, session_id=owner_session.id, token_hash="a" * 64)
+        session.add(token)
+        session.commit()
+        with pytest.raises(IntegrityError), session.begin_nested():
+            session.add(
+                RefreshToken(user_id=friend.id, session_id=owner_session.id, token_hash="b" * 64)
+            )
+            session.flush()
+        with pytest.raises(IntegrityError), session.begin_nested():
+            session.add(
+                RefreshToken(user_id=rider.id, session_id=owner_session.id, token_hash="a" * 64)
+            )
+            session.flush()
+
+        token_id = token.id
         session.delete(rider)
         session.commit()
         session.expunge_all()  # Observe the DB result, not the identity map's cached link.
+        assert session.get(RefreshToken, token_id) is None
         assert session.get(UserIntegration, link_id) is None
         assert len(session.scalars(select(UserIntegration)).all()) == 1
 
@@ -115,5 +136,13 @@ def test_initial_migration_matches_models_and_enforces_ownership(
         assert connection.execute(text("SELECT to_regclass('public.users')")).scalar_one() is None
         assert (
             connection.execute(text("SELECT to_regclass('public.user_integrations')")).scalar_one()
+            is None
+        )
+        assert (
+            connection.execute(text("SELECT to_regclass('public.auth_sessions')")).scalar_one()
+            is None
+        )
+        assert (
+            connection.execute(text("SELECT to_regclass('public.refresh_tokens')")).scalar_one()
             is None
         )

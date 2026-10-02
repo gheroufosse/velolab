@@ -21,11 +21,15 @@ Learning is a first-class goal, equal to shipping.
 - **Build together, one piece at a time.** Scaffold infrastructure and
   boilerplate; leave domain logic and React components to the owner unless
   asked otherwise. Review and explain rather than silently rewriting.
-- **Current session authorization.** The owner has authorized assistant
-  implementation of Stage 1 provisioning, database isolation, and the login
-  slice: a 10-minute JWT access token and one protected route. This exception
-  does not remove the learning/explanation policy or authorize refresh/logout;
-  it does not mark Stage 1 complete.
+- **Recorded Stage 1 authorization.** The owner authorized assistant work on
+  provisioning, database isolation, login and the ADR-021 refresh/session slice,
+  including session-specific logout and autonomous Codex implementation, testing,
+  fixes and review under the approved refresh policy. This is a narrow record of
+  that Stage 1 scope, not standing permission for future domain work. Preserve
+  the learning/explanation policy. Frontend/sync work and production commands
+  are not authorized; publication (commits, pushes, PRs) and branch cleanup
+  require fresh owner approval. This record does not independently establish
+  Stage 1 completion.
 - **Explain frontend concepts.** The owner is an experienced Python engineer
   and new to JavaScript, TypeScript and React. Do not explain Python basics.
   Do explain browser, bundler, React state and TypeScript type-system concepts
