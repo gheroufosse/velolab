@@ -47,9 +47,13 @@ prefixes. The auth slice is being published from `feat/auth-sessions`, based on
 the latest `main`; the owner approved commit, push, PR and squash merge only after
 green GitHub CI. Current-session independent verification also passed a fresh
 dedicated PostgreSQL 17 full check (99 tests, zero skips, plus lint/format/types;
-see `docs/session-handoff.md`). GitHub CI for this slice remains pending; local
-verification is not CI or deployment sign-off. No real-use migration/account
-provisioning was performed. CI opts into disposable PostgreSQL tests and rejects
+see `docs/session-handoff.md`). Auth PR [#13](https://github.com/gheroufosse/velolab/pull/13)
+passed GitHub CI [run 37060343473](https://github.com/gheroufosse/velolab/actions/runs/37060343473)
+on head `fc34c343263f12cd57330b0116cdf6ee224a825e`: API lint/format/types,
+99 PostgreSQL-enabled tests with zero skips, disposable cleanup and the stable
+`ci` gate passed; the web job was intentionally path-filtered. Merge remains
+pending; CI and local verification are not deployment sign-off. No real-use
+migration/account provisioning was performed. CI opts into disposable PostgreSQL tests and rejects
 failed, cancelled or unexpectedly skipped required jobs. Next build stage is
 Stage 2 sync; UI remains Stage 3.
 

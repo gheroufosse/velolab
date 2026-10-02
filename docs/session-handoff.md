@@ -7,16 +7,18 @@ Codex implementation, disposable PostgreSQL tests and independent review,
 including minimal session-specific logout. `AGENTS.md` records that narrow
 Stage 1 authorization, not standing permission for future domain work.
 
-- Current publication branch: `feat/auth-sessions`, based on the latest `main`
-  after docs PR #12. The owner now explicitly approved committing, pushing,
-  opening a PR and squash-merging the refresh/session slice **only after** its
-  GitHub CI is green. The earlier publication approval below applied only to
-  the already-merged access-only slice. No production operations, Stage 2 work
-  or unrelated PR publication were approved.
+- Publication branch: `feat/auth-sessions`, based on `main` after docs PR #12.
+  The owner explicitly approved commit, push, PR and squash merge **only after**
+  green GitHub CI. Draft auth PR [#13](https://github.com/gheroufosse/velolab/pull/13)
+  first passed CI on `fc34c343263f12cd57330b0116cdf6ee224a825e`;
+  this documentation status update requires another green CI run before merge.
+  The earlier publication approval below applied only to the already-merged
+  access-only slice. No production operations, Stage 2 work or unrelated PR
+  publication were approved.
 - Docs PR [#12](https://github.com/gheroufosse/velolab/pull/12), clarifying
   dashboard MVP and future data contracts, merged on 2026-10-02 at 20:14:49 UTC
   as `0e13d54aefd3754df9cd629d1a78df2c14cc270e`; its three checks passed.
-  This does not publish or verify the uncommitted auth slice.
+  This did not publish or verify the separate auth slice.
 - Login now sets an opaque HttpOnly/SameSite=Strict refresh cookie. Only token
   hashes are stored in new user-owned session/token tables, shipped with
   Alembic revision `c437ce183e2b`. Refresh rotates tokens under a parent-row lock;
@@ -38,8 +40,8 @@ Stage 1 authorization, not standing permission for future domain work.
   provisioning concurrency, replay serialization and refresh/logout races.
   Loopback `127.0.0.1:5435`, tmpfs, restricted runner and cluster marker were
   confirmed; zero fixture databases and zero exact-project containers, networks
-  or volumes remained after cleanup. These are local results, not auth GitHub CI
-  or deployment sign-off.
+  or volumes remained after cleanup. These are local results, not GitHub CI or
+  deployment sign-off.
 - Historical verification used distinct generated test-only secrets, explicit
   `TEST_POSTGRES_*`, a unique Compose project, `--env-file /dev/null`, tmpfs and
   loopback-only `127.0.0.1:5435`. Zero fixture databases before teardown; zero
@@ -50,11 +52,16 @@ Stage 1 authorization, not standing permission for future domain work.
   PR stays cohesive because splitting origin/CSRF, cookie issuance, rotation,
   replay and session revocation into intermediate PRs risks publishing incomplete
   security contracts. Migration and critical concurrency tests stay in the PR.
-- Stage 1 is locally implemented/verified; GitHub CI and merge remain pending.
-  It is not deployment-approved.
-  No frontend/sync, production commands, real account provisioning or new
-  dependencies. GitHub CI for this slice and full Compose/proxy checks remain
-  unperformed. TLS and rate limiting are still required before network exposure.
+- GitHub CI [run 37060343473](https://github.com/gheroufosse/velolab/actions/runs/37060343473)
+  passed for the first published head: API lint, formatting, types and **99
+  PostgreSQL-enabled tests, zero skips**; disposable PostgreSQL container and
+  network were removed by the successful cleanup step. `changes` and stable
+  `ci` passed; web was intentionally skipped by path filtering. Final-head CI
+  and merge remain pending after this documentation-only update.
+- Stage 1 is locally implemented/verified and in draft PR #13, not merged or
+  deployment-approved. No frontend/sync, production commands, real account
+  provisioning or new dependencies. Full Compose/proxy checks remain unperformed.
+  TLS and rate limiting are still required before network exposure.
 
 **Learning notes.** A refresh cookie survives a page reload while an in-memory
 access JWT does not; HttpOnly prevents JavaScript reading the refresh secret.
@@ -63,9 +70,9 @@ human passwords. Locking a stable parent session serializes operations even as
 individual tokens rotate. Strict replay revocation can force re-login after an
 innocent concurrent refresh; Stage 3 must coordinate refresh requests across tabs.
 
-**Next.** Publish the authorized Stage 1 PR, self-review the exact diff and
-require green GitHub CI (including PostgreSQL and cleanup) before squash merge.
-Then scope Stage 2's intervals.icu client/sync together; do not start UI early.
+**Next.** Rerun local checks and require green final-head GitHub CI (including
+PostgreSQL and cleanup), then mark PR #13 ready and squash merge. Then scope
+Stage 2's intervals.icu client/sync together; do not start UI early.
 Real-use migration/provisioning needs separate explicit approval.
 
 Everything below is historical evidence for the earlier access-only slice;
