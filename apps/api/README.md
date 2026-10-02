@@ -103,9 +103,10 @@ There is no registration endpoint. Private provisioning, login and the
 refresh/session slice are implemented. A historical local dedicated PostgreSQL 17
 full check passed 99 tests with zero skips, plus lint, formatting and types (see
 `docs/session-handoff.md`). A current-session dedicated PostgreSQL 17 full check
-also passed 99 tests with zero skips plus lint, formatting and types. The owner
-approved publication of this slice from `feat/auth-sessions`, conditional on
-green GitHub CI before squash merge. Local passes are not CI sign-off.
+also passed 99 tests with zero skips plus lint, formatting and types. Auth PR
+[#13](https://github.com/gheroufosse/velolab/pull/13) passed final-head GitHub
+CI (99 PostgreSQL-enabled tests, zero skips) and was squash-merged; see
+`docs/session-handoff.md`. Local passes alone are not CI sign-off.
 
 ## Authentication and session renewal (Stage 1)
 

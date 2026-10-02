@@ -43,19 +43,19 @@ upgrade/downgrade, persistence, refresh/replay and concurrent refresh/logout
 behavior. Zero fixture databases remained and the disposable project's resources
 were removed. Independent Codex security/spec review found no material issues.
 Login validation continues to redact credentials under mounted/proxy path
-prefixes. The auth slice is being published from `feat/auth-sessions`, based on
-the latest `main`; the owner approved commit, push, PR and squash merge only after
-green GitHub CI. Current-session independent verification also passed a fresh
-dedicated PostgreSQL 17 full check (99 tests, zero skips, plus lint/format/types;
-see `docs/session-handoff.md`). Auth PR [#13](https://github.com/gheroufosse/velolab/pull/13)
-passed GitHub CI [run 37060343473](https://github.com/gheroufosse/velolab/actions/runs/37060343473)
-on head `fc34c343263f12cd57330b0116cdf6ee224a825e`: API lint/format/types,
-99 PostgreSQL-enabled tests with zero skips, disposable cleanup and the stable
-`ci` gate passed; the web job was intentionally path-filtered. Merge remains
-pending; CI and local verification are not deployment sign-off. No real-use
-migration/account provisioning was performed. CI opts into disposable PostgreSQL tests and rejects
-failed, cancelled or unexpectedly skipped required jobs. Next build stage is
-Stage 2 sync; UI remains Stage 3.
+prefixes. The owner approved publication after green GitHub CI. Auth PR
+[#13](https://github.com/gheroufosse/velolab/pull/13) was squash-merged as
+`8c5268977878d75e0786a2b7d97552cf515640d2` after final-head CI
+[run 37060700250](https://github.com/gheroufosse/velolab/actions/runs/37060700250)
+passed: API lint/format/types, 99 PostgreSQL-enabled tests with zero skips,
+disposable cleanup and stable `ci`; web was intentionally path-filtered. Main
+CI [run 37060921206](https://github.com/gheroufosse/velolab/actions/runs/37060921206)
+also passed the same API checks, 99 tests and cleanup. The fresh local
+dedicated PostgreSQL 17 full check passed 99 tests, zero skips (see
+`docs/session-handoff.md`). CI and local checks are not deployment sign-off.
+No real-use migration/account provisioning was performed. CI opts into
+disposable PostgreSQL tests and rejects failed, cancelled or unexpectedly
+skipped required jobs. Next build stage is Stage 2 sync; UI remains Stage 3.
 
 **Done when.** A user can log in and call a protected endpoint, verified by
 integration tests, and the remaining Stage 1 refresh work is complete.

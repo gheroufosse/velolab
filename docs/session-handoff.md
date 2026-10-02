@@ -7,14 +7,14 @@ Codex implementation, disposable PostgreSQL tests and independent review,
 including minimal session-specific logout. `AGENTS.md` records that narrow
 Stage 1 authorization, not standing permission for future domain work.
 
-- Publication branch: `feat/auth-sessions`, based on `main` after docs PR #12.
-  The owner explicitly approved commit, push, PR and squash merge **only after**
-  green GitHub CI. Draft auth PR [#13](https://github.com/gheroufosse/velolab/pull/13)
-  first passed CI on `fc34c343263f12cd57330b0116cdf6ee224a825e`;
-  this documentation status update requires another green CI run before merge.
-  The earlier publication approval below applied only to the already-merged
-  access-only slice. No production operations, Stage 2 work or unrelated PR
-  publication were approved.
+- The owner explicitly approved the Stage 1 auth PR and squash merge only after
+  green GitHub CI. Auth PR [#13](https://github.com/gheroufosse/velolab/pull/13)
+  was merged as `8c5268977878d75e0786a2b7d97552cf515640d2` on 2026-10-02.
+  Its final head was `ddf0bf19fb25f43caded9d045d450c75298dd0c2` on
+  `feat/auth-sessions` (based on `main` after docs PR #12). The earlier
+  publication approval below applied only to the already-merged access-only
+  slice. No production operations, Stage 2 work or unrelated PR publication
+  were approved.
 - Docs PR [#12](https://github.com/gheroufosse/velolab/pull/12), clarifying
   dashboard MVP and future data contracts, merged on 2026-10-02 at 20:14:49 UTC
   as `0e13d54aefd3754df9cd629d1a78df2c14cc270e`; its three checks passed.
@@ -52,16 +52,19 @@ Stage 1 authorization, not standing permission for future domain work.
   PR stays cohesive because splitting origin/CSRF, cookie issuance, rotation,
   replay and session revocation into intermediate PRs risks publishing incomplete
   security contracts. Migration and critical concurrency tests stay in the PR.
-- GitHub CI [run 37060343473](https://github.com/gheroufosse/velolab/actions/runs/37060343473)
-  passed for the first published head: API lint, formatting, types and **99
-  PostgreSQL-enabled tests, zero skips**; disposable PostgreSQL container and
-  network were removed by the successful cleanup step. `changes` and stable
-  `ci` passed; web was intentionally skipped by path filtering. Final-head CI
-  and merge remain pending after this documentation-only update.
-- Stage 1 is locally implemented/verified and in draft PR #13, not merged or
-  deployment-approved. No frontend/sync, production commands, real account
-  provisioning or new dependencies. Full Compose/proxy checks remain unperformed.
-  TLS and rate limiting are still required before network exposure.
+- Final-head GitHub CI [run 37060700250](https://github.com/gheroufosse/velolab/actions/runs/37060700250)
+  passed: API lint, formatting, types and **99 PostgreSQL-enabled tests, zero
+  skips**; disposable PostgreSQL container and network were removed by the
+  successful cleanup step. `changes` and stable `ci` passed; web was intentionally
+  skipped by path filtering. First-head CI
+  [run 37060343473](https://github.com/gheroufosse/velolab/actions/runs/37060343473)
+  also passed before a documentation-only status update. Post-merge main CI
+  [run 37060921206](https://github.com/gheroufosse/velolab/actions/runs/37060921206)
+  passed API lint/format/types, 99 PostgreSQL-enabled tests, cleanup and `ci`.
+- Stage 1 is merged and test-verified, not deployment-approved. No frontend/sync,
+  production commands, real account provisioning or new dependencies. Full
+  Compose/proxy checks remain unperformed. TLS and rate limiting are still
+  required before network exposure.
 
 **Learning notes.** A refresh cookie survives a page reload while an in-memory
 access JWT does not; HttpOnly prevents JavaScript reading the refresh secret.
@@ -70,10 +73,8 @@ human passwords. Locking a stable parent session serializes operations even as
 individual tokens rotate. Strict replay revocation can force re-login after an
 innocent concurrent refresh; Stage 3 must coordinate refresh requests across tabs.
 
-**Next.** Rerun local checks and require green final-head GitHub CI (including
-PostgreSQL and cleanup), then mark PR #13 ready and squash merge. Then scope
-Stage 2's intervals.icu client/sync together; do not start UI early.
-Real-use migration/provisioning needs separate explicit approval.
+**Next.** Scope Stage 2's intervals.icu client/sync together; do not start UI
+early. Real-use migration/provisioning needs separate explicit approval.
 
 Everything below is historical evidence for the earlier access-only slice;
 old authorization/status statements do not apply to the refresh work above.
