@@ -5,16 +5,17 @@ import getpass
 import json
 import sys
 import time
+import unicodedata
 import warnings
 from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
-BASE = "https://intervals.icu/api/v1/athlete/0"
+BASE = "https://intervals.icu/api/v1/athlete"
 MAX_BYTES = 4 * 1024 * 1024
 LIMIT = 1000
 FIELDS = {
@@ -47,7 +48,19 @@ FIELDS = {
 
 
 class ProbeError(Exception):
-    """Only static, safe messages belong here."""
+    """Only static labels and validated numeric HTTP statuses belong here."""
+
+
+class ProviderHTTPError(ProbeError):
+    """Safe HTTP failure, distinct from other probe errors for request labeling."""
+
+    def __init__(self, status: int):
+        if type(status) is not int or not 100 <= status <= 599:
+            raise ProbeError("Provider HTTP failure; stopped without retry.")
+        suffix = (
+            "rate limited; stopped without retry." if status == 429 else "stopped without retry."
+        )
+        super().__init__(f"HTTP {status}; {suffix}")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -56,7 +69,23 @@ class NoRedirect(HTTPRedirectHandler):
         raise ProbeError("Redirect refused; no follow-up request sent.")
 
 
-def make_reader(key: str) -> Callable[[str, dict[str, str]], object]:
+def validate_athlete_id(athlete_id: str) -> None:
+    # Conservative local safety policy, not a provider schema restriction.
+    # Keep opaque identity unchanged; only exact "0" selects the authenticated alias.
+    if (
+        not athlete_id
+        or athlete_id in ("0", ".", "..")
+        or any(
+            char.isspace() or unicodedata.category(char) in ("Cc", "Cf", "Cs") or char in "/\\%"
+            for char in athlete_id
+        )
+    ):
+        raise ProbeError("Invalid athlete ID; use an explicit ID without unsafe characters.")
+
+
+def make_reader(key: str, athlete_id: str) -> Callable[[str, dict[str, str]], object]:
+    validate_athlete_id(athlete_id)
+    encoded_id = quote(athlete_id, safe="", encoding="utf-8", errors="strict")
     # Direct TLS connection: no environment proxies or cross-host redirects.
     opener = build_opener(ProxyHandler({}), NoRedirect())
     authorization = "Basic " + base64.b64encode(("API_KEY:" + key).encode()).decode("ascii")
@@ -64,11 +93,16 @@ def make_reader(key: str) -> Callable[[str, dict[str, str]], object]:
     def read(endpoint: str, params: dict[str, str]) -> object:
         if endpoint not in ("", "activities", "wellness"):
             raise ProbeError("Endpoint refused.")
-        url = BASE + ("/" + endpoint if endpoint else "")
+        url = BASE + "/" + encoded_id + ("/" + endpoint if endpoint else "")
         if params:
             url += "?" + urlencode(params)
         request = Request(
-            url, headers={"Authorization": authorization, "Accept": "application/json"}
+            url,
+            headers={
+                "Authorization": authorization,
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0",
+            },
         )
         try:
             with opener.open(request, timeout=15) as response:
@@ -78,10 +112,8 @@ def make_reader(key: str) -> Callable[[str, dict[str, str]], object]:
             return json.loads(body)
         except HTTPError as exc:
             exc.close()
-            # Do not display URL, headers, body, reason or exception details.
-            if exc.code == 429:
-                raise ProbeError("Rate limited; stopped without retry.") from None
-            raise ProbeError("Provider HTTP failure; stopped without retry.") from None
+            # Only the numeric status survives; no URL, headers, body or reason.
+            raise ProviderHTTPError(exc.code) from None
         except ProbeError:
             raise
         except Exception:
@@ -143,13 +175,26 @@ def summarize(records: list[dict], endpoint: str, oldest: date, newest: date) ->
     }
 
 
-def probe(read: Callable[[str, dict[str, str]], object], now: datetime | None = None) -> dict:
-    athlete = read("", {})
+def probe(
+    read: Callable[[str, dict[str, str]], object],
+    requested_athlete_id: str,
+    now: datetime | None = None,
+) -> dict:
+    def request(endpoint: str, params: dict[str, str], label: str) -> object:
+        # Labels come exclusively from the fixed request plan below, never data.
+        try:
+            return read(endpoint, params)
+        except ProviderHTTPError as exc:
+            raise ProbeError(f"{label}: {exc}") from None
+
+    athlete = request("", {}, "athlete/profile")
     if not isinstance(athlete, dict):
         raise ProbeError("Unexpected athlete shape; probe stopped.")
     athlete_id = athlete.get("id")
     if not isinstance(athlete_id, str) or not athlete_id:
         raise ProbeError("Missing athlete identity; probe stopped.")
+    if athlete_id != requested_athlete_id:
+        raise ProbeError("Athlete profile identity mismatch; probe stopped.")
     try:
         zone = ZoneInfo(athlete["timezone"])
     except Exception:
@@ -172,8 +217,8 @@ def probe(read: Callable[[str, dict[str, str]], object], now: datetime | None = 
         ],
     }
 
-    def listing(endpoint: str, params: dict[str, str]) -> list[dict]:
-        batch = rows(read(endpoint, params))
+    def listing(endpoint: str, params: dict[str, str], part: str) -> list[dict]:
+        batch = rows(request(endpoint, params, f"{endpoint}/{part}"))
         identities(batch)
         if endpoint == "activities" and any(
             row.get("icu_athlete_id") is not None and row["icu_athlete_id"] != athlete_id
@@ -190,11 +235,11 @@ def probe(read: Callable[[str, dict[str, str]], object], now: datetime | None = 
             (oldest, oldest + timedelta(days=3)),
             (oldest + timedelta(days=3), newest),
         ]
-        for lo, hi in windows:
+        for part, (lo, hi) in zip(("full", "left", "right"), windows, strict=True):
             params = {"oldest": lo.isoformat(), "newest": hi.isoformat()}
             if endpoint == "activities":
                 params["limit"] = str(LIMIT)
-            batches.append(listing(endpoint, params))
+            batches.append(listing(endpoint, params, part))
             report["requests_completed"] += 1
         full, left, right = batches
         union = identities(left) | identities(right)
@@ -215,6 +260,7 @@ def probe(read: Callable[[str, dict[str, str]], object], now: datetime | None = 
                     "newest": newest.isoformat(),
                     "limit": "1",
                 },
+                "limit-one",
             )
             report["requests_completed"] += 1
             observation["limit_one_count"] = len(small)
@@ -234,17 +280,19 @@ def main() -> int:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
+            athlete_id = getpass.getpass("Intervals.icu athlete ID (hidden): ")
+            validate_athlete_id(athlete_id)
             key = getpass.getpass("Intervals.icu API key (hidden): ")
         if not key or len(key) > 4096 or any(ord(char) < 32 for char in key):
             raise ProbeError("Invalid credential input; probe stopped.")
-        reader = make_reader(key)
+        reader = make_reader(key, athlete_id)
         del key  # Not secure memory erasure: authorization remains in process memory.
 
         def paced_read(endpoint: str, params: dict[str, str]) -> object:
             time.sleep(0.25)
             return reader(endpoint, params)
 
-        report = probe(paced_read)
+        report = probe(paced_read, athlete_id)
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     except KeyboardInterrupt, EOFError:
