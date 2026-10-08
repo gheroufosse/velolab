@@ -77,7 +77,9 @@ FastAPI dependency injection.
   restore approval remain required before real-key storage; no credential
   enrollment, database re-encryption or sync workflow is implemented.
 - [ ] Evidence-independent slices (ADR-024), in order, each a separate PR:
-  1. [ ] Typed intervals.icu client (httpx, no DB): safety policy, bounded 429
+  1. [x] (implemented, synthetic-tested; follow-ups: set `httpx`/`httpcore`
+     loggers to WARNING when app logging is configured, since INFO logs URLs
+     with athlete ID/dates; reject duplicate IDs/dates in slice 3) Typed intervals.icu client (httpx, no DB): safety policy, bounded 429
      retries, redacted errors, missing-vs-null preserved, truncation flagged;
      MockTransport synthetic tests
   2. [ ] `activities` and `wellness_days` models + migration: composite owner
