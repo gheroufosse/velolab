@@ -180,3 +180,41 @@ There are no endpoints, provider calls, sync markers or delete operations.
 Verification uses synthetic records and the dedicated disposable PostgreSQL 17
 cluster only: no live provider data, credentials or source-parity claims. The
 four evidence blockers above remain open and Stage 2 remains incomplete.
+
+## 6. Sync-state primitives (ADR-024 slice 4 / ADR-025 preview markers)
+
+`velolab_api.sync_state.SyncStateService` is bound to a session, explicit owner
+and integration UUID. `integration_sync_state` has one row per integration;
+its composite FK enforces the same owner. There are no HTTP calls or endpoints.
+
+- `claim_lease()` lazily creates owned state and conditionally claims a fresh
+  UUID token only when free or expired; `None` means busy. Commit this short
+  transaction **before** any future provider call. The claim records a running
+  attempt, not success. A crashed process recovers through expiry/takeover.
+- After network work, start a new **short** transaction: `fence_lease(token)`
+  first, then domain upserts, `record_preview_outcome(...)` (or full-sync
+  checkpoint/success), and `release_lease(token)`. Commit them together. Let any
+  error roll back that entire transaction; do not catch lease loss and commit
+  domain writes. The fence locks the state row only during persistence, never
+  across HTTP. Every state write checks owner, token and unexpired lease;
+  PostgreSQL wall-clock time is checked again after acquiring the row lock.
+- `record_checkpoint` stores the last committed provider-local backfill day and
+  completion flag. Window direction and verified coverage belong to future
+  orchestration. `record_success` is **full-sync only**. Failure changes only
+  attempt status/error, accepting provider `ErrorCode` or static `SyncErrorCode`
+  enum members, never exception/provider text.
+- Preview outcome records `last_preview_at`, `preview_oldest`, `preview_newest`
+  and `possibly_truncated`, with `preview_completed` or `preview_partial` status.
+  It never changes full-sync success/checkpoint/completion; failure retains all
+  earlier freshness/coverage markers. Neither outcome proves provider coverage.
+- Pure `should_sync(last_success_at, now=..., force=...)` requires aware times:
+  no success or age **at least** 24 hours permits automatic full sync; manual
+  force bypasses only this throttle. Attempts and previews are not inputs.
+  `SyncPolicy` keeps the unverified 5-minute lease TTL and ADR-007's 24-hour
+  interval in one place. Preview orchestration must explicitly choose a TTL
+  longer than its bounded request/network budget (ADR-025), not assume this
+  default establishes that budget. No lease heartbeat or renewal is added.
+
+The caller owns commit/rollback and must refresh loaded ORM state after Core
+updates. These primitives do not complete ADR-025 slice 3: preview orchestration,
+credential-replacement exclusion and endpoints remain separate work.

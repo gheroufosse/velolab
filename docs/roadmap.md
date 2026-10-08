@@ -91,8 +91,11 @@ FastAPI dependency injection.
      binding and duplicate-batch rejection, atomic merged-payload projections,
      no-op reruns, rollback and concurrent partial updates verified on disposable
      PostgreSQL. [Merge/bookkeeping policy](intervals-data-contract.md#5-evidence-independent-upsert-layer-adr-024-slice-3)
-  4. [ ] Sync state with fenced lease and throttle decision; failures never
-     advance `last_success_at`; concurrency tests on disposable PostgreSQL
+  4. [x] Sync state with fenced lease and pure throttle decision; failures and
+     preview outcomes never advance `last_success_at`/backfill markers. Owned
+     state migration, concurrency, expiry/takeover, stale-holder rollback and
+     preview/failure freshness verified on disposable PostgreSQL; no orchestration.
+     [Lease/transaction contract](intervals-data-contract.md#6-sync-state-primitives-adr-024-slice-4--adr-025-preview-markers)
 
   Unverified provider behaviour stays in named, configurable settings (see
   ADR-024). Orchestration, backfill, reconciliation and real-key enrollment
