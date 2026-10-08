@@ -240,7 +240,12 @@ export class AuthCoordinator {
     if (this.#state.status !== "authenticated") throw new AuthRequiredError(this.#state.reason ?? "expired");
     let response = await this.#fetch(path, withBearer(init, token));
     this.#assertGeneration(generation); // a late response after logout is dropped
-    if (response.status !== 401 || !options.replayOnUnauthorized) return response;
+    if (response.status !== 401) return response;
+    if (!options.replayOnUnauthorized) {
+      // A rejected write cannot be replayed, but it must still stop protected
+      // work and send the browser back to login rather than keep a dead token.
+      return this.#giveUp("expired");
+    }
 
     // At most one coordinated refresh and one replay (the 401 proves the first
     // attempt was not processed, so replaying a read is safe).
