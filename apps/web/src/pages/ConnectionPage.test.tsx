@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import type { ActivityList } from "../activities";
 import { AuthCoordinator } from "../auth/coordinator";
 
 // Fake only browser coordination APIs and the external HTTP boundary.
@@ -14,11 +15,17 @@ const KEY = "synthetic-entry-only-key";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let client: QueryClient;
 let writeResponse: () => Response | Promise<Response>;
+let activityResponse: () => Response | Promise<Response>;
+const preview = (overrides: Partial<ActivityList> = {}): ActivityList => ({
+  items: [], has_more: false, coverage: "recent_preview", last_preview_at: null,
+  possibly_truncated: false, last_error_code: null, ...overrides,
+});
 let metadata: { configured: boolean; athlete_id: string | null; last_error_code: string | null };
 let calls: Array<{ path: string; init: RequestInit }>;
 
 beforeEach(async () => {
   calls = [];
+  activityResponse = () => json(preview());
   writeResponse = () => json({ athlete_id: "i123", timezone: "Europe/Brussels" });
   metadata = { configured: false, athlete_id: null, last_error_code: null };
   localStorage.clear();
@@ -34,6 +41,7 @@ beforeEach(async () => {
       if (path === "/api/auth/me") return json({ id: "owner", email: "owner@example.test" });
       if (init.method === "POST" || init.method === "PUT") return writeResponse();
       if (path === PATH) return json(metadata);
+      if (path === "/api/activities") return activityResponse();
       throw new Error("Unexpected synthetic request");
     },
   });
@@ -47,9 +55,146 @@ afterEach(() => {
 
 async function openPage() {
   const view = render(<QueryClientProvider client={client}><App /></QueryClientProvider>);
-  await screen.findByText("No saved connection.");
+  await screen.findByText(metadata.configured ? "Saved athlete: i123" : "No saved connection.");
   return view;
 }
+
+const cachedRide = {
+  id: "activity-1", name: "Evening ride", type: "Ride", start_local: "2026-10-08T23:30:00",
+  duration_s: 0, distance_m: 0, training_load: null,
+};
+
+describe("recent activity preview", () => {
+  it("shows loading, empty, and read-error states without starting a sync", async () => {
+    let complete!: (response: Response) => void;
+    activityResponse = () => new Promise<Response>((resolve) => { complete = resolve; });
+    await openPage();
+    expect(screen.getByText("Loading activities…")).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Sync recent activities" }).disabled).toBe(true);
+    await waitFor(() => expect(calls.some((call) => call.path === "/api/activities")).toBe(true));
+    await act(async () => complete(json(preview())));
+    await screen.findByText(/No cached activities/);
+    activityResponse = () => json({}, 503);
+    fireEvent.click(screen.getByRole("button", { name: "Check activity status" }));
+    await screen.findByText(/Could not load activity status/);
+    expect(calls.some((call) => call.path === `${PATH}/sync-now`)).toBe(false);
+  });
+
+  it("keeps provider-local starts, zero, gaps, and cached stale/partial coverage visible", async () => {
+    activityResponse = () => json(preview({
+      items: [cachedRide], has_more: true, possibly_truncated: true,
+      last_preview_at: "2026-10-09T01:00:00Z", last_error_code: "provider_unavailable",
+    }));
+    await openPage();
+    await screen.findByText("Evening ride");
+    expect(screen.getByText(/Recent preview \(last 30 days, unverified\)/)).toBeTruthy();
+    expect(screen.getByText(/2026-10-08 23:30:00/)).toBeTruthy();
+    expect(screen.getByText("0:00")).toBeTruthy();
+    expect(screen.getByText("0")).toBeTruthy();
+    expect(screen.getAllByRole("definition").map((cell) => cell.textContent)).toEqual(["0:00", "0", "—"]);
+    expect(screen.getByText(/Partial preview/)).toBeTruthy();
+    expect(screen.getByText(/Stale preview/)).toBeTruthy();
+    expect(screen.getByText(/More are stored/)).toBeTruthy();
+    activityResponse = () => json({}, 503);
+    fireEvent.click(screen.getByRole("button", { name: "Check activity status" }));
+    await screen.findByText(/freshness is unknown/);
+    expect(screen.getByText("Evening ride")).toBeTruthy();
+  });
+
+  it("syncs once, blocks duplicate clicks, and refreshes the activity query", async () => {
+    metadata = { configured: true, athlete_id: "i123", last_error_code: null };
+    let complete!: (response: Response) => void;
+    writeResponse = () => new Promise<Response>((resolve) => { complete = resolve; });
+    await openPage();
+    await screen.findByText(/No cached activities/);
+    fireEvent.click(screen.getByRole("button", { name: "Sync recent activities" }));
+    const pending = screen.getByRole<HTMLButtonElement>("button", { name: "Syncing recent activities…" });
+    expect(pending.disabled).toBe(true);
+    fireEvent.click(pending);
+    await waitFor(() => expect(calls.some((call) => call.path === `${PATH}/sync-now`)).toBe(true));
+    activityResponse = () => json(preview({ items: [cachedRide], last_preview_at: "2026-10-09T01:00:00Z" }));
+    await act(async () => complete(json({ synced_count: 1, last_preview_at: "2026-10-09T01:00:00Z", possibly_truncated: false, last_error_code: null })));
+    await screen.findByText("Evening ride");
+    expect(screen.getByText("Synced 1 recent activities.")).toBeTruthy();
+    expect(calls.filter((call) => call.path === "/api/activities")).toHaveLength(2);
+    const syncs = calls.filter((call) => call.path === `${PATH}/sync-now`);
+    expect(syncs).toHaveLength(1);
+    expect(syncs[0]!.init.method).toBe("POST");
+    expect(syncs[0]!.init.credentials).toBe("same-origin");
+    expect(new Headers(syncs[0]!.init.headers).get("Authorization")).toBe("Bearer synthetic-token");
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
+  });
+
+  it("does not let a pre-sync pending read hide newly synced activities", async () => {
+    metadata = { configured: true, athlete_id: "i123", last_error_code: null };
+    let initialRead!: (response: Response) => void;
+    activityResponse = () => new Promise<Response>((resolve) => { initialRead = resolve; });
+    writeResponse = () => json({ synced_count: 1, last_preview_at: null, possibly_truncated: false, last_error_code: null });
+    await openPage();
+    await waitFor(() => expect(calls.some((call) => call.path === "/api/activities")).toBe(true));
+    activityResponse = () => json(preview({ items: [cachedRide] }));
+    fireEvent.click(screen.getByRole("button", { name: "Sync recent activities" }));
+    await screen.findByText("Evening ride");
+    await act(async () => initialRead(json(preview())));
+    expect(screen.getByText("Evening ride")).toBeTruthy();
+  });
+
+  it.each(["busy", "lost response"])("does not replay a sync after %s and rereads cached status", async (failure) => {
+    metadata = { configured: true, athlete_id: "i123", last_error_code: null };
+    activityResponse = () => json(preview({ items: [cachedRide] }));
+    writeResponse = () => {
+      if (failure === "busy") return json({ detail: "untrusted provider body" }, 409);
+      throw new TypeError("untrusted provider body");
+    };
+    await openPage();
+    await screen.findByText("Evening ride");
+    fireEvent.click(screen.getByRole("button", { name: "Sync recent activities" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert").textContent).toContain(failure === "busy" ? "Sync already running" : "It may have completed");
+    expect(document.body.textContent).not.toContain("untrusted provider body");
+    await waitFor(() => expect(calls.filter((call) => call.path === "/api/activities")).toHaveLength(2));
+    expect(calls.filter((call) => call.path === `${PATH}/sync-now`)).toHaveLength(1);
+    expect(screen.getByText("Evening ride")).toBeTruthy();
+  });
+
+  it("renders invalid optional fields as gaps and caches only the response allowlist", async () => {
+    activityResponse = () => json({ ...preview(), payload: KEY, items: [{
+      id: "missing-fields", name: null, type: null, start_local: "invalid",
+      duration_s: -1, distance_m: "unknown", training_load: null, payload: KEY,
+    }] });
+    await openPage();
+    await screen.findByRole("heading", { name: "—" });
+    expect(screen.getAllByRole("definition").map((cell) => cell.textContent)).toEqual(["—", "—", "—"]);
+    expect(screen.getByText(/— · —/)).toBeTruthy();
+    expectNoRetainedKey();
+  });
+
+  it("aborts an unmounted sync and ignores its late outcome", async () => {
+    metadata = { configured: true, athlete_id: "i123", last_error_code: null };
+    let complete!: (response: Response) => void;
+    writeResponse = () => new Promise<Response>((resolve) => { complete = resolve; });
+    const view = await openPage();
+    await screen.findByText(/No cached activities/);
+    fireEvent.click(screen.getByRole("button", { name: "Sync recent activities" }));
+    await waitFor(() => expect(calls.some((call) => call.path === `${PATH}/sync-now`)).toBe(true));
+    const sync = calls.find((call) => call.path === `${PATH}/sync-now`)!;
+    view.unmount();
+    expect(sync.init.signal?.aborted).toBe(true);
+    await act(async () => complete(json({ synced_count: 1, last_preview_at: null, possibly_truncated: false, last_error_code: null })));
+    expect(calls.filter((call) => call.path === "/api/activities")).toHaveLength(1);
+    expect(client.getQueryData(["activities"])).toEqual(preview());
+  });
+
+  it("requires login on a rejected sync without refresh or replay", async () => {
+    metadata = { configured: true, athlete_id: "i123", last_error_code: null };
+    writeResponse = () => json({}, 401);
+    await openPage();
+    fireEvent.click(screen.getByRole("button", { name: "Sync recent activities" }));
+    await screen.findByRole("button", { name: "Sign in" });
+    expect(calls.filter((call) => call.path === `${PATH}/sync-now`)).toHaveLength(1);
+    expect(calls.filter((call) => call.path === "/api/auth/refresh")).toHaveLength(1);
+  });
+});
 
 function enterCredentials() {
   fireEvent.change(screen.getByLabelText("Athlete ID"), { target: { value: "i123" } });
