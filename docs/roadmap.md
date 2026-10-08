@@ -71,8 +71,11 @@ FastAPI dependency injection.
   before sync implementation: identity, timezone, units, week comparisons,
   missing/null/zero semantics and metric date alignment (ADR-022). Public
   schema research is recorded; evidence blockers remain open.
-- [ ] Implement and verify API-key encryption before storing real integration
-  credentials; document key backup and rotation (ADR-023)
+- [x] Implement and test API-key encryption; document key backup and rotation
+  (ADR-023; [implementation and operational gates](integration-key-encryption.md)).
+  Crypto/settings verified locally, **not deployed**: key delivery and backup/
+  restore approval remain required before real-key storage; no credential
+  enrollment, database re-encryption or sync workflow is implemented.
 - [ ] Typed API client with API-key auth
 - [ ] `activities` and `wellness` models
 - [ ] One-shot sync endpoint, 24-month backfill

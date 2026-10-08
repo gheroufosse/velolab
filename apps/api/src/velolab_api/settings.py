@@ -4,7 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from sqlalchemy import URL
 
 # Local development uses the same root .env as Docker Compose.
@@ -67,6 +67,34 @@ class Settings(BaseSettings):
             port=self.postgres_port,
             database=self.postgres_db,
         )
+
+
+class IntegrationKeySettings(BaseSettings):
+    """Server-only configuration; never inherit the app's root .env source.
+
+    Parse the keyring only when credential operations are requested so missing
+    or invalid configuration does not disable health or private provisioning.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="INTEGRATION_", extra="ignore", hide_input_in_errors=True
+    )
+
+    keyring: SecretStr | None = Field(default=None, exclude=True, repr=False)
+    write_key_id: str | None = Field(default=None, exclude=True, repr=False)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # Explicit injection is useful for disposable tests; deployment supplies
+        # process environment through an owner-approved secret delivery method.
+        return init_settings, env_settings
 
 
 @lru_cache
