@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -12,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -42,6 +44,46 @@ class UserIntegration(Base):
     external_athlete_id: Mapped[str] = mapped_column(String(length=255))
     encrypted_api_key: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IntegrationSyncState(Base):
+    """Full-sync and recent-preview freshness are deliberately independent."""
+
+    __tablename__ = "integration_sync_state"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["integration_id", "user_id"],
+            ["user_integrations.id", "user_integrations.user_id"],
+            ondelete="CASCADE",
+            name="fk_integration_sync_state_integration_owner",
+        ),
+        CheckConstraint(
+            "(lease_token IS NULL) = (lease_expires_at IS NULL)",
+            name="ck_integration_sync_state_lease_pair",
+        ),
+        CheckConstraint(
+            "(preview_oldest IS NULL AND preview_newest IS NULL) OR "
+            "(preview_oldest IS NOT NULL AND preview_newest IS NOT NULL "
+            "AND preview_oldest <= preview_newest)",
+            name="ck_integration_sync_state_preview_window",
+        ),
+    )
+
+    integration_id: Mapped[UUID] = mapped_column(primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_attempt_status: Mapped[str | None] = mapped_column(String(50))
+    last_error_code: Mapped[str | None] = mapped_column(String(50))
+    lease_token: Mapped[UUID | None] = mapped_column()
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Last committed provider-local backfill day; orchestration will own direction/coverage.
+    backfill_checkpoint: Mapped[date | None] = mapped_column(Date)
+    backfill_complete: Mapped[bool] = mapped_column(Boolean, server_default=false())
+    last_preview_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    preview_oldest: Mapped[date | None] = mapped_column(Date)
+    preview_newest: Mapped[date | None] = mapped_column(Date)
+    possibly_truncated: Mapped[bool] = mapped_column(Boolean, server_default=false())
 
 
 class AuthSession(Base):
