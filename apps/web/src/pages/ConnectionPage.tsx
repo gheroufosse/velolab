@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, fetchIdentity } from "../api";
 import { coordinator } from "../auth/browser";
+import ActivitiesSection from "./ActivitiesSection";
 import {
   CONNECTION_QUERY_KEY, fetchConnection, saveConnection, testConnection,
 } from "../connection";
@@ -154,6 +155,7 @@ export default function ConnectionPage() {
           {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
         </form>
       </section>
+      <ActivitiesSection configured={connection.data?.configured === true} />
     </main>
   );
 }
