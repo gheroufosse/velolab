@@ -21,7 +21,8 @@ class Base(DeclarativeBase):
 
 @lru_cache
 def get_engine() -> Engine:
-    return create_engine(get_settings().database_url, pool_pre_ping=True)
+    # Bound parameters include credential envelopes; keep them out of SQL errors/logs.
+    return create_engine(get_settings().database_url, pool_pre_ping=True, hide_parameters=True)
 
 
 def get_session() -> Generator[Session]:

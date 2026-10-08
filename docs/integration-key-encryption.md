@@ -1,10 +1,13 @@
-# Integration API-key encryption — proposed Stage 2 design
+# Integration API-key encryption — Stage 2 implementation
 
-**Status:** Design only (2026-10-02); not implemented, verified or approved for
-real credentials. ADR-023 is the gate before storing a real intervals.icu key.
-This is independent of the unresolved sync evidence in
-[the data contract](intervals-data-contract.md). No dependency, schema,
-settings, endpoint or migration changes are made by this document.
+**Status:** Owner-authorized crypto/settings slice implemented and tested locally;
+**not deployed or approved for real credentials**. ADR-023 remains the gate before
+real-key storage, including the operational approvals below. This is independent
+of the unresolved sync evidence in [the data contract](intervals-data-contract.md).
+The implementation adds `cryptography`, environment-only integration-key settings
+and a small crypto module. The existing text column requires no schema change or
+migration. No enrollment endpoint, provider call, sync or database rotation command
+is implemented.
 
 ## Scope and threat boundary
 
@@ -19,7 +22,7 @@ rollback of an earlier valid ciphertext for the *same* identity, nor deletion
 of rows; database audit/backup integrity is a separate concern. This does not
 encrypt JWTs, passwords, session digests or training data.
 
-## Proposed cryptographic format and identity binding
+## Cryptographic format and identity binding
 
 - Use the maintained Python `cryptography` library's `AESGCM` with a random
   256-bit key per key ID. `AESGCM.generate_key(bit_length=256)` yields suitable
@@ -81,10 +84,10 @@ cryptographic primitive is proposed. [Fernet and MultiFernet docs](https://crypt
   bytes. Maintain a restricted server-only keyring (`kid` → key) and separate
   write-key ID; never reuse `AUTH_JWT_SECRET`, derive keys from human passwords,
   or ship a usable default. The owner must approve the deployment secret
-  delivery method before implementation (restricted secret file/manager are
-  options, not assumptions); do not place real material in docs, fixtures,
-  examples or shell history. Root `.env` loading in current `Settings` is not
-  an approved custody method. Validate keyring and write-key configuration
+  delivery method before deployment or real-key entry (restricted secret
+  file/manager are options, not assumptions); do not place real material in docs,
+  fixtures, examples or shell history. Root `.env` loading in current `Settings`
+  is not an approved custody method. Validate keyring and write-key configuration
   before any integration-credential operation. Missing, malformed or
   duplicate material, unknown selected `kid`, failed authentication or
   unsupported envelope **fails closed**: no plaintext fallback, no write,
@@ -96,6 +99,59 @@ cryptographic primitive is proposed. [Fernet and MultiFernet docs](https://crypt
   unavailable/error result; log only safe error categories/opaque IDs if needed.
   Never embed secrets in domain payloads or browser responses. This must hold
   on validation, provider and database exceptions as well as happy paths.
+
+## Implemented interface and conservative choices
+
+- `velolab_api.integration_secrets.IntegrationKeyCipher(IntegrationKeySettings())`
+  validates the complete keyring and selected write key before use. Its
+  `encrypt(row, api_key: SecretStr) -> SecretStr` and
+  `decrypt(row) -> SecretStr` methods perform no row mutation, I/O, authorization
+  or commit. Decryption reads both the envelope and all bound metadata from the
+  supplied `UserIntegration`; callers must fetch/authorize the persisted row.
+  Enrollment must explicitly allocate a UUID before encryption (SQLAlchemy's
+  column default otherwise runs only at insertion).
+- `IntegrationKeySettings` is separate from database/auth `Settings`, which
+  avoids requiring DB credentials to validate crypto configuration. It accepts
+  explicit constructor injection or **process environment only**:
+  `INTEGRATION_KEYRING` is a JSON object mapping key IDs to encoded 32-byte keys;
+  `INTEGRATION_WRITE_KEY_ID` selects one of those IDs. No dotenv/file-secret
+  source is used, even if `_env_file` is supplied. Missing values are permitted
+  at settings construction for health/provisioning, but cipher construction
+  fails closed. This selects a narrow configuration interface, **not** an
+  approved deployment key-delivery method; do not store real keys in root `.env`.
+- Key IDs are 1–32 ASCII letters, digits, `_` or `-`. Reject repeated JSON IDs
+  and identical decoded key material under multiple IDs; rotation must install
+  genuinely new material. Limit the keyring to 32 keys and 16,384 JSON characters.
+  Every configured key is validated, not only the selected write key.
+- Credentials are exact, nonempty UTF-8 strings of at most 4,096 encoded bytes:
+  no trimming or normalization. Bound provider/athlete strings are exact and
+  nonempty, within the existing 50/255-character column limits. UUIDs must be
+  UUID objects and are encoded canonically. AAD starts with the bytes
+  `velolab:integration-api-key` followed by a zero byte; each documented field
+  follows in order, prefixed by its UTF-8 byte length as a four-byte unsigned
+  big-endian integer. This fixes the v1 wire contract without delimiter ambiguity.
+- Reject envelopes over 5,600 ASCII characters, noncanonical base64, non-12-byte
+  nonces and ciphertext/tag fields outside 17–4,112 decoded bytes (16-byte tag
+  plus nonempty bounded plaintext). Reads select only the envelope's key ID;
+  writes always use the configured write key and fresh random nonce. Installing
+  new configuration requires constructing a new cipher (or restarting callers);
+  no hidden global key cache or automatic key retirement is introduced.
+- Both plaintext and envelopes are returned as `SecretStr`, requiring explicit
+  `.get_secret_value()` only at the provider/persistence boundary. Settings
+  fields are excluded from repr and model serialization; the cipher has a
+  redacted repr and refuses pickling. Expected configuration/parser/AEAD failures
+  become `IntegrationSecretError` with the message
+  `Integration credentials unavailable.`, with no original exception context/cause. The module emits no logs. The application
+  SQLAlchemy engine uses `hide_parameters=True` to redact bound parameters in
+  SQL errors/logs; ORM rows still contain the stored envelope, not plaintext.
+
+**Caller obligations:** never serialize an integration ORM row, dump its
+attributes, log explicitly unwrapped values, or enable traceback/telemetry
+capture of local variables. `SecretStr` is an accidental-disclosure guard, not
+process-memory isolation or an HTTP response contract. Future enrollment/sync
+must use explicit response allowlists and generic error handling across provider
+and database failures, and must never expose either ciphertext or plaintext to
+the browser. This slice neither accepts nor stores real credentials.
 
 ## Small single-instance rotation and recovery plan (future procedure)
 
@@ -135,16 +191,30 @@ cryptographic primitive is proposed. [Fernet and MultiFernet docs](https://crypt
 
 ## Verification and outstanding approval
 
-Future tests use generated disposable keys/credentials only: round-trip;
-changed ciphertext/tag/nonce/AAD; wrong key, user, row, provider and athlete;
-malformed/unknown version or `kid`/key configuration; serialization and error
-redaction; replacement binding; interrupted rotation, resume, conflicting
-write/maintenance exclusion, mixed-key rollback and backup/key mismatch.
-Exercise persistence/concurrency against the dedicated disposable PostgreSQL
-instance (ADR-019), never the real-use DB. No live verification is claimed.
+`apps/api/tests/test_integration_secrets.py` exercises the public crypto/settings
+boundary with real AES-GCM and transient ORM rows, using only generated encryption
+keys and synthetic disposable credentials. Coverage includes round-trip and
+replacement with fresh nonces; tampered ciphertext/tag/nonce; wrong key, user,
+row, provider and athlete; authenticated key IDs and unambiguous AAD fields;
+malformed/unknown/noncanonical/oversized envelopes and key configuration; duplicate
+IDs/material; UTF-8 bounds and unallocated row IDs; mixed-key reads, rewrapping
+and historical-key retirement failure; environment-only loading with no JWT or
+dotenv fallback; repr/JSON/pickle safeguards and generic unchained errors.
+
+Local verification: **44 crypto/settings tests passed**;
+`env -u VELOLAB_TEST_DATABASE ./scripts/check.sh` passed lint, formatting, types
+and the default suite: **214 passed, 25 PostgreSQL-dependent tests skipped**
+(two dependency deprecation warnings). No PostgreSQL instance was started or
+touched; existing fast tests use disposable in-memory SQLite where applicable.
+No live persistence, deployment, backup/restore or maintenance verification is
+claimed. Future enrollment/rotation workflows must exercise atomic persistence,
+interrupted rotation/resume, conflicting writes/maintenance exclusion, mixed-key
+rollback and backup/key mismatch against the dedicated disposable PostgreSQL
+instance (ADR-019), never the real-use DB.
 
 **Unresolved operational gate:** owner approval of server key delivery, separate
-encrypted backup and restore process, maintenance access/downtime, retention
-window and publication is required before implementation or real-key entry.
-This document is not authorization to run production commands, publish the
-branch, or bypass the sync contract's independent evidence blockers.
+encrypted backup and restore process, maintenance access/downtime and retention
+window is required before deployment or real-key entry. Publication requires
+separate approval. Autonomous authorization covered this implementation/test
+slice only: this document is not authorization to run production commands,
+publish the branch, or bypass the sync contract's independent evidence blockers.
