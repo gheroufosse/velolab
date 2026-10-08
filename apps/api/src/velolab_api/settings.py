@@ -2,6 +2,7 @@ from functools import lru_cache
 from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -26,6 +27,9 @@ class Settings(BaseSettings):
     auth_trusted_origin: str | None = None
     # Include the proxy prefix if the public API is mounted at /api.
     auth_cookie_path: str = "/auth"
+    # ADR-025: explicit server-only opt-in; never infer owner from first login.
+    integration_preview_enabled: bool = False
+    integration_preview_owner_id: UUID | None = None
 
     @property
     def cookie_secure(self) -> bool | None:
