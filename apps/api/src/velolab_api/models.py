@@ -80,8 +80,8 @@ class Activity(Base):
     """Payload is truth; nullable projections are rebuildable (ADR-024 slice 2).
 
     Provider identity is Intervals `id`, never upstream `external_id`.
-    Mapping/units remain unverified (contract blocker 4); slice 3 will own the
-    single projection mapping and bookkeeping updates, not this schema.
+    Mapping/units remain unverified (contract blocker 4); intervals_upsert owns
+    the single projection mapping and bookkeeping updates, not this schema.
     """
 
     __tablename__ = "activities"

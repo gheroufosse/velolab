@@ -79,14 +79,18 @@ FastAPI dependency injection.
 - [ ] Evidence-independent slices (ADR-024), in order, each a separate PR:
   1. [x] (implemented, synthetic-tested; follow-ups: set `httpx`/`httpcore`
      loggers to WARNING when app logging is configured, since INFO logs URLs
-     with athlete ID/dates; reject duplicate IDs/dates in slice 3) Typed intervals.icu client (httpx, no DB): safety policy, bounded 429
+     with athlete ID/dates; duplicate IDs/dates rejected by slice 3) Typed
+     intervals.icu client (httpx, no DB): safety policy, bounded 429
      retries, redacted errors, missing-vs-null preserved, truncation flagged;
      MockTransport synthetic tests
   2. [x] `activities` and `wellness_days` models + migration: composite owner
      FKs, uniqueness, JSONB payload as truth with re-derivable projections;
      disposable PostgreSQL migration/constraint tests
-  3. [ ] Idempotent non-destructive upsert layer: omission preserves, explicit
-     null policy configurable (default preserve), no delete path
+  3. [x] Idempotent non-destructive upsert layer: omission preserves, explicit
+     null policy configurable (default preserve), no delete path; owner/athlete
+     binding and duplicate-batch rejection, atomic merged-payload projections,
+     no-op reruns, rollback and concurrent partial updates verified on disposable
+     PostgreSQL. [Merge/bookkeeping policy](intervals-data-contract.md#5-evidence-independent-upsert-layer-adr-024-slice-3)
   4. [ ] Sync state with fenced lease and throttle decision; failures never
      advance `last_success_at`; concurrency tests on disposable PostgreSQL
 

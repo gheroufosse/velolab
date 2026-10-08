@@ -137,3 +137,46 @@ No personal API requests, real payloads or generated fixtures were used here.
   approval. Verify secret serialization/error redaction, encrypted-key
   fail-closed behavior and backup/rotation procedure before any real key is
   stored. A local or CI test is not proof of live provider parity.
+
+## 5. Evidence-independent upsert layer (ADR-024 slice 3)
+
+`velolab_api.intervals_upsert` exposes `upsert_activities` and
+`upsert_wellness_days`. Callers supply an explicit owner, persisted bound
+integration and parsed records. The layer validates the current database
+owner/provider/athlete binding, raw versus typed identities, all present
+candidate athlete-ID fields, and duplicate IDs/dates before writing a batch.
+It returns the number of inserted or changed rows, not the number sighted.
+There are no endpoints, provider calls, sync markers or delete operations.
+
+- PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` merges against the actual
+  conflict row, not a previously read Python copy. Omitted **top-level** fields
+  preserve existing fields; nested JSON objects/arrays are opaque field values
+  replaced as a whole when supplied, not recursively interpreted as patches.
+- `UpsertPolicy.explicit_nulls` defaults to `NullPolicy.PRESERVE` (blocker 3).
+  An incoming null does not replace an existing key. A new null-valued key is
+  retained, including on insert, so missing and explicit null remain distinct.
+  `NullPolicy.CLEAR` deliberately replaces a supplied field with JSON null and
+  clears its projection; it is opt-in, not a claim of verified provider clearing.
+  Zero and false are values, never treated as missing.
+- `PayloadFields` is the named, configurable source of candidate projection
+  and athlete field names. Its defaults, carried-over flags and units are
+  **unverified** (blocker 4). One mapping function projects both insert payloads
+  and atomically merged update payloads. Changed mappings can reproject retained
+  data; typed record date views do not override raw payload truth. Malformed
+  projection casts fail rather than fabricate values. Wellness keys remain the
+  supplied local date; no timezone rekeying is inferred.
+- `first_seen_at` is immutable. `updated_at` and `last_seen_at` change only for
+  payload/projection changes. A distinctness condition prevents physical writes
+  on identical reruns, including changes ignored by the preserve policy.
+  Therefore `last_seen_at` means the last **changed observation**, not every
+  sighting or successful sync; slice 4 must supply freshness independently.
+- The caller owns the outer transaction and commit (including future checkpoint
+  writes). A batch savepoint rolls back all its writes on failure. Core SQL does
+  not refresh already-loaded ORM domain objects: use `Session.refresh`, expiry
+  or a fresh reader when observing updates. Concurrent partial writes preserve
+  each other's omitted fields; conflicting supplied values still follow database
+  write order. This is not stale-run fencing or sync serialization (slice 4).
+
+Verification uses synthetic records and the dedicated disposable PostgreSQL 17
+cluster only: no live provider data, credentials or source-parity claims. The
+four evidence blockers above remain open and Stage 2 remains incomplete.
