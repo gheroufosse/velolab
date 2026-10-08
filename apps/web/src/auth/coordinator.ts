@@ -237,7 +237,7 @@ export class AuthCoordinator {
     // before the request: login/logout/recovery changes it.
     const generation = this.#state.generation;
     // Logout/recovery during the token await: do not send with a dead token.
-    if (this.#state.status !== "authenticated") throw new Error("login-required");
+    if (this.#state.status !== "authenticated") throw new AuthRequiredError(this.#state.reason ?? "expired");
     let response = await this.#fetch(path, withBearer(init, token));
     this.#assertGeneration(generation); // a late response after logout is dropped
     if (response.status !== 401 || !options.replayOnUnauthorized) return response;
