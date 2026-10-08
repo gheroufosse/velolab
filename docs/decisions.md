@@ -647,6 +647,249 @@ orchestration starts.
 
 ---
 
+## ADR-025 — Local connection preview before the full dashboard
+
+**Status.** Owner-authorized architecture plan for a single-owner, loopback-only
+preview. Implementation, operational gates, real-use commands and publication
+remain separate approvals. This record does not declare Stage 2 complete.
+ADR-017 remains: scaffold and explain; the owner writes domain logic and React
+components unless explicitly delegated.
+
+**Context.** The first useful feedback should be browser login, testing the
+intervals.icu connection and seeing recent real activities, not a completed
+training dashboard. Login/refresh/logout, authenticated credential encryption,
+the typed synchronous provider client and owned activity/wellness tables already
+exist. Upsert and sync-state work are prerequisites, not assumed complete.
+Completeness, corrections, clearing and metric/time parity evidence remains open.
+
+**Decision.** Deliver the four sequential slices below using FastAPI and
+Vite + React + TypeScript + Tailwind + TanStack Query. Keep the first UI simple:
+login → Connection → Test → Save → Sync recent activities → activity list.
+Keep Apache ECharts as the chart choice, but defer the optional single graph
+until the list is useful. No coach/chat or full dashboard.
+
+**Narrow amendments.** ADR-024's prohibition on enrollment, UI and sync endpoints
+is amended only for this gated local preview. Its client safety, ownership,
+non-destructive merge and concurrency requirements remain. ADR-007's 24-month
+activity/wellness backfill and automatic 24-hour throttle remain the eventual
+product policy, not preview behavior. No sync-on-launch here. A basic activity
+list moves ahead of the dashboard, without Stage 5 browsing/detail features;
+roadmap sequencing must be updated separately. This is not completion of
+Stages 2–5 or evidence of source parity.
+
+### Real-key gate: local custody, not a plaintext exception
+
+Reuse `IntegrationKeyCipher` and environment-only `IntegrationKeySettings`.
+Proposed single-instance delivery: owner generates a random 256-bit AES-GCM key
+in a restricted file outside the repository/DB (owner-only directory, file mode
+0600). A local launcher reads it into the backend process environment as
+`INTEGRATION_KEYRING`/`INTEGRATION_WRITE_KEY_ID`, without printing it, putting it
+in command arguments/history or passing it to Vite. No root `.env` keyring,
+JWT-secret reuse, hardcoded defaults, automatic startup regeneration or new cipher.
+
+Before real-key entry, obtain and record owner approval of the actual custody
+location/delivery method, separately encrypted key backup/restore process and
+maintenance/retention choices in
+[integration-key-encryption.md](integration-key-encryption.md). Prove restore
+using generated secrets on disposable PostgreSQL first. For local rotation,
+pause the single backend under owner-controlled downtime and follow that
+existing procedure; retain keys needed by retained DB backups. An automated
+rotation command is not a preview prerequisite. Local-only does **not** waive
+ADR-023's operational gate. Until approved and verified, test with synthetic
+credentials/mock transport only. Real-use migrations, provisioning and live
+provider/DB checks still need explicit authorization.
+
+Use an explicit server-only preview opt-in and configured owner UUID; reject
+other authenticated users and non-loopback trusted-origin configuration. Bind
+Vite/API/proxy listeners to loopback; do not infer safety from Host/forwarded
+headers. Keep exactly ADR-019's real-use and disposable-test environments.
+LAN/VPS exposure waits for TLS and authentication rate limiting.
+
+The rule that the key never reaches the browser is clarified narrowly for
+owner enrollment: a password-style input necessarily holds the **owner-entered**
+key transiently and submits it once to the same-origin backend. The backend never
+returns a stored/decrypted key or ciphertext. Do not put input in URLs, browser
+storage, query keys/cache, retained TanStack mutation variables, telemetry or
+logs. Submit via a direct non-retrying request, clear the field after submission/
+unmount and require re-entry on failure. JavaScript cannot guarantee secure
+memory erasure. No API/encryption key belongs in `VITE_*` settings or commits.
+
+### API and browser boundary
+
+Browser URLs use `/api`; FastAPI routes below omit that prefix. Vite proxies
+`/api` to FastAPI, strips the prefix upstream and preserves browser Origin.
+Configure the exact loopback Vite `AUTH_TRUSTED_ORIGIN` and cookie path
+`/api/auth`. Relative fetches use `credentials: "same-origin"`, bearer tokens
+and `X-Velolab-CSRF: 1` for login/refresh/logout. No CORS or auth-policy change.
+
+| Route | Preview contract |
+|---|---|
+| Existing `POST /auth/login`, `/refresh`, `/logout`; `GET /auth/me` | ADR-020/021 unchanged; no signup. |
+| `GET /integrations/intervals` | Safe configured/athlete metadata plus preview window/time/status and static error code; never ORM serialization. |
+| `POST /integrations/intervals/test` | Submitted key + explicit athlete ID; check crypto readiness before provider profile call, verify exact identity, return only identity/timezone; no persistence. |
+| `PUT /integrations/intervals` | Independently reverify submitted key/profile, encrypt and atomically insert/replace for the same athlete; never trust a previous browser test. |
+| `POST /integrations/intervals/sync-now` | No arbitrary caller window/athlete; synchronous recent-activity preview under the integration lease. |
+| `GET /activities` | Owned cached latest 50 rows, deterministic provider-local start descending/nulls last + ID tie-breaker; `has_more` and preview freshness/uncertainty; no provider call. |
+
+Every new route uses `get_current_user` plus the preview owner gate; integration
+ownership comes from that user, never submitted `user_id`. Use response allowlists,
+static errors and `Cache-Control: no-store`. Extend login's route-aware validation
+redaction to test/save, including malformed JSON and mounted/proxy paths; default
+FastAPI errors must not echo the key. Set `httpx`/`httpcore` loggers to WARNING
+and disable request-body/exception-local capture before enrollment. Return no raw
+athlete profile. Athlete rebinding is 409, not an update mixing namespaces.
+Same-athlete credential replacement keeps the integration UUID, uses a fresh
+nonce and shares the sync exclusion boundary once sync exists. Verify before
+the short fenced persistence transaction; never persist a placeholder key.
+
+Connection shows separate Test and Save actions: tested is not saved. Existing
+connections show metadata, never a prefilled key. Show pending/error/empty/cached
+states and disable duplicate clicks for convenience, not concurrency correctness.
+Retain cached rows after provider failure with visible stale/partial labels.
+Use ADR-016's restrained dark-first direction, labelled inputs, keyboard access
+and a compact responsive list; do not expand this into a design-system project.
+
+Access tokens stay in memory outside TanStack's cache. Use in-tab single-flight
+refresh and one same-origin Web Lock for cookie-mutating login/refresh/logout;
+BroadcastChannel distributes volatile token/logout/recovery notifications across
+tabs. Acquire the lock before request start, then recheck token state. Do not
+parallel-refresh or blindly retry an ambiguous refresh response: stop protected
+work, broadcast recovery and require login. Clear token/query data on logout or
+account change; an auth-generation guard rejects late responses after logout.
+A protected read gets at most one coordinated refresh and replay; credential
+writes/sync get no automatic replay. Unsupported coordination APIs show a clear
+unsupported-browser/recovery state, not an uncoordinated fallback. Verify with
+real browser tabs, not only mocked requests.
+
+### Bounded synchronous sync without full orchestration
+
+Fetch one configurable recent window, initially 30 provider-local calendar days
+including today. Resolve a valid IANA timezone from the bound athlete profile;
+missing/invalid timezone fails clearly rather than guessing the browser zone.
+Fix run boundaries, record/response caps and retry/time budget. Choose these
+together with an explicit request deadline and a lease TTL longer than that
+budget. Use a synchronous FastAPI handler and the existing synchronous client,
+not blocking calls in an async handler. No 24-month loop, wellness fetch,
+automatic sync, worker, scheduler or deletion path.
+
+Reuse/finish ADR-024 upsert and fenced sync-state primitives before exposing
+sync-now. Reject duplicate IDs before any write; omission preserves known values,
+explicit-null policy defaults to preserve, zero stays zero, and projections are
+recomputed from merged payloads. Payload remains truth, but reject credential-
+bearing fields before domain persistence; profile/auth objects are not activities.
+
+Claim a persisted lease in a short transaction before network work. Do not hold
+DB transactions/row locks over HTTP calls. Overlap returns static 409 busy.
+Persist records and preview outcome atomically in a short transaction: first
+conditionally fence/lock the state row against the same **unexpired** lease token,
+then upsert; lost lease rolls back without activity writes. Release through the
+same token. Failure preserves previous data/preview-success timestamps and records
+only a static attempt error. Crashes recover through lease expiry. Credential
+replacement must not alter a running lease's credential binding. A browser timeout
+does not prove rollback: read status and retry manually only when safe.
+
+Reuse ADR-024 state fields for attempt/error/lease; add migration-backed
+`last_preview_at`, preview window and possibly-truncated flag. A nontruncated
+response can mark a preview fetch completed; a reached-limit response can store
+returned records with a partial outcome. Neither proves provider completeness.
+**Never advance `last_success_at`, the full-backfill checkpoint or
+`backfill_complete` for preview work.** Always label recent coverage unverified;
+truncation adds a partial warning. Full sync will own success/throttle later.
+
+Show provider-local start, name/type when present, duration, distance and provider
+training load. Verify each selected field/type/unit against the authoritative
+provider schema before enabling its backend-owned mapping; account/source parity
+remains unverified. Missing/invalid values show gaps; zero is not a gap. Do not
+reinterpret provider-local start in the browser timezone. No weekly totals,
+CTL/ATL/TSB, readiness claims or inferred wellness data. An optional later ECharts
+plot uses one verified list metric without interpolation; it is not a dashboard.
+
+### Delivery checklist — four sequential PR slices
+
+Each item uses this plan (`docs/decisions.md`, ADR-025). Keep PRs near the
+~400-line guidance in `docs/workflow.md`; if safety work cannot fit honestly,
+reduce surface scope or split before implementation, never remove critical tests
+merely to force the four-PR count.
+
+- [ ] **1. Browser login foundation.** Create Vite/React/TS/Tailwind scaffold,
+  typed fetch/auth coordinator and TanStack Query provider in `apps/web`;
+  login, protected Connection placeholder, logout and reload recovery only.
+  Reference: `apps/api/src/velolab_api/auth.py:78-100,159-265` for cookie/CSRF;
+  `267-305` for protected identity. Shape:
+  `navigator.locks.request("velolab-auth", () => refreshOnce())`;
+  `fetch("/api/auth/refresh", {method: "POST", credentials: "same-origin",
+  headers: {"X-Velolab-CSRF": "1"}})`.
+  Do NOT persist tokens, add CORS or generic refresh retries. Acceptance:
+  simultaneous requests/tab startup, logout, expiry and lost refresh responses
+  recover without replay loops; frontend type/lint/focused tests pass.
+- [ ] **2. Connection test/save vertical slice.** Add integration routes/DTOs,
+  Connection form, validation redaction and local custody/backup instructions.
+  Files: new backend integration module and web Connection surface; modify
+  `apps/api/src/velolab_api/app.py` and `docs/integration-key-encryption.md`.
+  Reference: `app.py:14-24` for redaction; `models.py:32-44` for binding;
+  `intervals_client.py:296-303` for profile verification;
+  `integration_secrets.py:115-180` for cipher use (all backend paths under
+  `apps/api/src/velolab_api/`). Do NOT serialize ORM rows, store plaintext or
+  rebind athletes. Acceptance: synthetic test/save; failure leaves storage
+  unchanged; crypto failure makes no call/write; key/ciphertext never appears in
+  success/error/validation responses; owner isolation and atomic replacement
+  pass on disposable PostgreSQL. Real-key use remains operationally gated.
+- [ ] **3. Preview sync backend.** Integrate separately reviewed upsert work;
+  add sync-state/lease service, Alembic migration, sync-now/status wiring and
+  focused tests. Do not overwrite another worker's `intervals_upsert.py` WIP.
+  Reference: `apps/api/src/velolab_api/models.py:60-75` for composite owner FKs,
+  `79-115` for activity identity/projections; `intervals_client.py:305-335` for
+  bounded listing/truncation. Apply ADR-024 slices 3/4 with preview-only markers.
+  Do NOT hold network-spanning transactions, infer deletion or mark backfill
+  complete. Acceptance: disposable PostgreSQL proves reruns, omission/null/zero,
+  duplicate rejection, one lease winner, expiry/takeover, stale-holder rollback,
+  replacement exclusion and failure freshness; synthetic provider tests cover
+  truncation/caps/rate/transport failures.
+- [ ] **4. Cached activity list vertical slice.** Add activity DTO/read route,
+  bounded owned query and simple React list; wire manual Sync and query
+  invalidation. Files: new backend activities module/tests, list/API modules in
+  `apps/web`. Reference: `apps/api/src/velolab_api/auth.py:267-305` for protected
+  DTO reads; `models.py:79-115` for owned storage. Response shape:
+  `{items: [], has_more: false, coverage: "recent_preview", last_preview_at: null,
+  possibly_truncated: false, last_error_code: null}`.
+  Do NOT expose raw payloads, compute training metrics in React or conceal gaps.
+  Acceptance: owner isolation/order/limit tests; browser shows empty/error/stale/
+  partial states and zero versus missing. A separately approved live run validates
+  the connection, not full sync completeness or source parity. Graph deferred.
+
+**Effort and quality.** Small functional preview, not throwaway security.
+Synthetic MockTransport fixtures; dedicated disposable PostgreSQL for migrations,
+ownership, atomicity and concurrency; focused UI/auth tests and manual browser
+multi-tab checks. Run existing backend checks and frontend CI/type/lint checks;
+no broad new test infrastructure without approval. Explain browser memory,
+bundler configuration, React state and query-cache ownership as introduced.
+Documentation-only ADR work requires no feature test run and claims no live
+verification.
+
+**Premortem.** Key loss makes ciphertext unusable: verified separate backup is a
+first-use gate. Missing timezone/metric evidence may block display: fail clearly
+or omit a field, never invent it. Request timeout can leave uncertain server work:
+bounded budget, fenced lease, status reads and no blind replay. Limited coverage
+is accepted for exploration only: preview markers/labels prevent misleading
+freshness claims. Refresh replay remains critical: real-tab verification required.
+
+**Deferred.** Full 24-month activity/wellness backfill, auto daily sync,
+completeness evidence, reconciliation/deletions, historical rescans, explicit
+clearing policy, full dashboard, activity filters/sorting/pagination controls,
+detail/streams, coach/chat, friends/OAuth, background workers, production secret
+management/rotation automation and LAN/VPS deployment.
+
+**Rejected.** Waiting for a full dashboard; plaintext or unbacked ephemeral keys;
+provider calls from the browser; weakening refresh-replay detection; treating
+30 days as ADR-007 completion; advancing full-sync success for a preview;
+using a disabled button instead of database concurrency protection.
+
+**Revisit when.** The preview is useful, sanitized evidence resolves a blocker,
+request latency exceeds its bound, or another user/network exposure is proposed.
+Widening this exception requires an explicit decision.
+
+---
+
 ## Open questions
 
 - Offline or PWA support — wanted eventually?
