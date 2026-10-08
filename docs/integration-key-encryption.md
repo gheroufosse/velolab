@@ -6,8 +6,9 @@ real-key storage, including the operational approvals below. This is independent
 of the unresolved sync evidence in [the data contract](intervals-data-contract.md).
 The implementation adds `cryptography`, environment-only integration-key settings
 and a small crypto module. The existing text column requires no schema change or
-migration. No enrollment endpoint, provider call, sync or database rotation command
-is implemented.
+migration. ADR-025's backend-only connection test/save routes are now implemented
+and synthetically tested; sync and a database rotation command are not implemented.
+Real-key entry remains operationally gated.
 
 ## Scope and threat boundary
 
@@ -153,6 +154,79 @@ must use explicit response allowlists and generic error handling across provider
 and database failures, and must never expose either ciphertext or plaintext to
 the browser. This slice neither accepts nor stores real credentials.
 
+## Local key-file delivery for the ADR-025 preview (approval still required)
+
+Proposed custody flow, **not permission to generate/use a real-use key or start
+an API against real-use PostgreSQL**:
+
+1. Owner approves an absolute custody path outside the repository and database,
+   in an owner-only directory (0700), plus the separate encrypted backup location,
+   restore procedure, maintenance downtime and historical-key retention window.
+2. Run `./scripts/gen-integration-key.sh /absolute/private/path/keyring.json` once.
+   It generates 256 random bits, stores the unpadded base64url key under
+   `local-v1` in a JSON keyring, creates a 0600 file without printing material,
+   refuses overwrite/symlinks and repository paths, and requires an owner-only
+   parent directory. Do not use shell tracing, paste/cat the file, commit it,
+   or generate replacement keys automatically at startup. Losing it makes the
+   stored credentials unrecoverable.
+3. After approval, an owner-maintained **backend-only** launcher reads the file
+   into process environment. For example, the following is a Bash script (run
+   it as a script, not as fish/zsh rc-file configuration); replace the nonsecret
+   path and launch command for the approved deployment:
+
+   ```bash
+   #!/usr/bin/env bash
+   set -euo pipefail  # never add set -x
+   key_file=/absolute/private/path/keyring.json
+   python3 - "$key_file" <<'PY'
+   import os, stat, sys
+   from pathlib import Path
+   p = Path(sys.argv[1])
+   if p.is_symlink():
+       sys.exit("Invalid key custody")
+   for path, mode in ((p, 0o600), (p.parent, 0o700)):
+       metadata = path.stat()  # missing files fail; never regenerate
+       if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != mode:
+           sys.exit("Invalid key custody")
+   PY
+   export INTEGRATION_KEYRING="$(< "$key_file")"
+   export INTEGRATION_WRITE_KEY_ID=local-v1
+   exec /absolute/path/to/backend-launch-command
+   ```
+
+   The secret is not a command argument/history entry and is not written to
+   root `.env`. The environment remains readable to privileged/local process
+   inspection; this is not protection from a compromised host. Never launch
+   Vite from this environment or create any `VITE_*` secret variable. The
+   launcher must check custody permissions remain 0700/0600 before use and
+   fail if the file is missing; it must not regenerate it.
+4. Before entering a real provider key, back up this keyring **separately and
+   encrypted**, then prove restore using generated secrets on the dedicated
+   disposable PostgreSQL instance. Restore both the matching DB and keyring;
+   validate AES-GCM decryption against the restored row IDs/owner/provider/
+   athlete binding. Record owner approval and verification evidence here; the
+   current synthetic connection tests are not backup/restore verification.
+
+Backend preview configuration is server-only:
+`INTEGRATION_PREVIEW_ENABLED=true`, `INTEGRATION_PREVIEW_OWNER_ID=<owner UUID>`,
+`AUTH_TRUSTED_ORIGIN=<exact loopback browser origin>`, `AUTH_JWT_SECRET` and
+`AUTH_COOKIE_PATH=/api/auth` behind the preview proxy, plus ordinary backend
+`POSTGRES_*` settings. Crypto accepts only process environment
+`INTEGRATION_KEYRING` and `INTEGRATION_WRITE_KEY_ID`. Missing opt-in/owner or a
+non-loopback origin disables the preview; a different authenticated user is
+rejected. Bind all listeners to loopback separately; configured origin checking
+cannot establish actual listener/network safety.
+
+`GET /integrations/intervals` returns only configured/athlete/static-error
+metadata. Test accepts transient submitted credentials but stores nothing;
+Save independently re-verifies and stores only an authenticated envelope.
+Same-athlete replacement retains its integration UUID; rebinding and an active
+sync lease return 409. All connection responses are no-store, including static
+validation errors (malformed JSON and mounted paths included). Provider errors
+never return their bodies, and httpx/httpcore loggers are WARNING. Do not enable
+request-body, exception-local, auth-header or SQL-parameter capture in logging/
+telemetry. No telemetry integration is currently configured.
+
 ## Small single-instance rotation and recovery plan (future procedure)
 
 1. With sync/credential writes **paused under a maintenance window**, take a
@@ -201,16 +275,34 @@ IDs/material; UTF-8 bounds and unallocated row IDs; mixed-key reads, rewrapping
 and historical-key retirement failure; environment-only loading with no JWT or
 dotenv fallback; repr/JSON/pickle safeguards and generic unchained errors.
 
-Local verification: **44 crypto/settings tests passed**;
+Initial crypto-slice verification: **44 crypto/settings tests passed**;
 `env -u VELOLAB_TEST_DATABASE ./scripts/check.sh` passed lint, formatting, types
 and the default suite: **214 passed, 25 PostgreSQL-dependent tests skipped**
 (two dependency deprecation warnings). No PostgreSQL instance was started or
 touched; existing fast tests use disposable in-memory SQLite where applicable.
-No live persistence, deployment, backup/restore or maintenance verification is
-claimed. Future enrollment/rotation workflows must exercise atomic persistence,
-interrupted rotation/resume, conflicting writes/maintenance exclusion, mixed-key
-rollback and backup/key mismatch against the dedicated disposable PostgreSQL
-instance (ADR-019), never the real-use DB.
+That initial run claimed no PostgreSQL persistence, deployment, backup/restore
+or maintenance verification.
+
+ADR-025 backend connection-slice verification: `VELOLAB_TEST_DATABASE=1
+./scripts/check.sh` passed lint, formatting, types and **323 tests, zero skips**
+on a fresh dedicated PostgreSQL 17 instance (127.0.0.1:5436, tmpfs, separate
+Compose project). The 17 connection integration tests use synthetic credentials,
+real auth/AES-GCM/persistence and `httpx.MockTransport`: test/save separation,
+independent verification, immutable identity and stable-UUID replacement with
+fresh nonces, provider/crypto/database failures without storage changes,
+redacted responses/validation on mounted paths, preview/owner isolation,
+concurrent first enrollment and active-lease replacement exclusion. Existing
+crypto tests cover restoration-compatible binding and mixed-key reads; no
+actual backup/restore workflow was run. Key-generator manual checks verified
+256-bit material, 0600/0700 permissions, no printed material and refusal of
+overwrite, symlink and repository paths. Temporary generated keys were removed.
+Zero fixture databases remained; the disposable container/network and temporary
+test configuration were removed. Three existing dependency/test warnings remain.
+No live provider, real-use DB, frontend, deployment or publication was exercised.
+
+Future rotation workflows must still exercise interrupted rotation/resume,
+maintenance exclusion, mixed-key rollback and backup/key mismatch against the
+dedicated disposable PostgreSQL instance (ADR-019), never the real-use DB.
 
 **Unresolved operational gate:** owner approval of server key delivery, separate
 encrypted backup and restore process, maintenance access/downtime and retention
