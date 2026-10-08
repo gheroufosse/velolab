@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 from enum import StrEnum
+from time import monotonic
 from urllib.parse import quote
 
 import httpx
@@ -29,6 +30,8 @@ class ErrorCode(StrEnum):
     RECORD_CAP = "record_cap_exceeded"
     RESPONSE_SHAPE = "invalid_response"
     ATHLETE_MISMATCH = "athlete_mismatch"
+    INVALID_TIMEZONE = "invalid_timezone"
+    DEADLINE = "deadline_exceeded"
 
 
 class IntervalsClientError(Exception):
@@ -201,6 +204,7 @@ class IntervalsClient:
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.time,
+        deadline: float | None = None,
     ) -> None:
         segment = _athlete_segment(athlete_id)
         if not isinstance(api_key, SecretStr):
@@ -216,6 +220,7 @@ class IntervalsClient:
         self._path = f"/api/v1/athlete/{segment}"
         self._policy = policy or IntervalsClientPolicy()
         self._sleep, self._clock = sleep, clock
+        self._deadline = deadline
         self._http = httpx.Client(
             base_url="https://intervals.icu",
             auth=httpx.BasicAuth("API_KEY", key),
@@ -257,13 +262,24 @@ class IntervalsClient:
             return None
         return wait
 
+    def _remaining(self) -> float:
+        if self._deadline is None:
+            return self._policy.timeout_seconds
+        remaining = self._deadline - monotonic()
+        if remaining <= 0:
+            raise IntervalsClientError(ErrorCode.DEADLINE)
+        return min(remaining, self._policy.timeout_seconds)
+
     def _read(self, endpoint: str, params: dict[str, str]) -> object:
         # Raise after the handler so __context__ cannot retain URL/body/key.
         failure = ErrorCode.TRANSPORT
         try:
             for attempt in range(self._policy.max_429_retries + 1):
                 wait = None
-                with self._http.stream("GET", self._path + endpoint, params=params) as response:
+                with self._http.stream(
+                    "GET", self._path + endpoint, params=params, timeout=self._remaining()
+                ) as response:
+                    self._remaining()
                     status = response.status_code
                     if status == 429:
                         if attempt < self._policy.max_429_retries:
@@ -274,13 +290,20 @@ class IntervalsClient:
                         raise IntervalsClientError(ErrorCode.HTTP, status)
                     else:
                         body = bytearray()
-                        for chunk in response.iter_bytes(chunk_size=65536):
+                        # Do not aggregate into fixed-size chunks: a slow drip
+                        # could keep the socket alive without yielding to our deadline.
+                        for chunk in response.iter_bytes():
+                            self._remaining()
                             if len(body) + len(chunk) > self._policy.max_response_bytes:
                                 raise IntervalsClientError(ErrorCode.RESPONSE_SIZE)
                             body.extend(chunk)
                         failure = ErrorCode.RESPONSE_SHAPE
-                        return json.loads(body)
+                        decoded = json.loads(body)
+                        self._remaining()
+                        return decoded
                 # Close each response before sleeping; KeyboardInterrupt propagates.
+                if self._deadline is not None and monotonic() + wait >= self._deadline:
+                    raise IntervalsClientError(ErrorCode.DEADLINE)
                 self._sleep(wait)
         except IntervalsClientError:
             raise

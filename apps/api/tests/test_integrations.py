@@ -31,7 +31,16 @@ PATH = "/integrations/intervals"
 KEY = "synthetic-intervals-credential-not-real"
 REPLACEMENT = "synthetic-replacement-not-real"
 BODY = {"api_key": KEY, "athlete_id": "opaque-athlete"}
-EMPTY = {"configured": False, "athlete_id": None, "last_error_code": None}
+EMPTY = {
+    "configured": False,
+    "athlete_id": None,
+    "last_error_code": None,
+    "last_preview_at": None,
+    "preview_oldest": None,
+    "preview_newest": None,
+    "possibly_truncated": False,
+    "last_attempt_status": None,
+}
 SAVED = {**EMPTY, "configured": True, "athlete_id": BODY["athlete_id"]}
 PASSWORD = "synthetic account password"
 

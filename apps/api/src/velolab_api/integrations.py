@@ -1,4 +1,4 @@
-"""Owner-only local connection preview (ADR-025); no sync or live-key approval."""
+"""Owner-only local connection and recent-sync preview (ADR-025)."""
 
 from ipaddress import ip_address
 from typing import Annotated
@@ -22,11 +22,16 @@ from velolab_api.intervals_client import (
     IntervalsClientError,
 )
 from velolab_api.models import IntegrationSyncState, User, UserIntegration
+from velolab_api.preview_sync import (
+    PreviewResult,
+    PreviewStatus,
+    PreviewSyncError,
+    preview_status,
+    sync_preview,
+)
 from velolab_api.settings import IntegrationKeySettings, Settings, get_settings
-from velolab_api.sync_state import SyncErrorCode
 
 router = APIRouter(prefix="/integrations/intervals", tags=["integrations"])
-_ERROR_CODES = {code.value for code in (*ErrorCode, *SyncErrorCode)}
 
 
 class ConnectionRequest(BaseModel):
@@ -43,10 +48,9 @@ class ConnectionRequest(BaseModel):
         return value
 
 
-class ConnectionMetadata(BaseModel):
+class ConnectionMetadata(PreviewStatus):
     configured: bool
     athlete_id: str | None
-    last_error_code: str | None
 
 
 class ConnectionTestResult(BaseModel):
@@ -118,18 +122,11 @@ def metadata(session: Session, user_id: UUID) -> ConnectionMetadata:
             UserIntegration.user_id == user_id, UserIntegration.provider == "intervals"
         )
     )
-    code = None
-    if row is not None:
-        code = session.scalar(
-            select(IntegrationSyncState.last_error_code).where(
-                IntegrationSyncState.user_id == user_id,
-                IntegrationSyncState.integration_id == row.id,
-            )
-        )
+    state = preview_status(session, user_id, row.id) if row is not None else PreviewStatus()
     return ConnectionMetadata(
         configured=row is not None,
         athlete_id=row.external_athlete_id if row is not None else None,
-        last_error_code=code if code in _ERROR_CODES else None,
+        **state.model_dump(),
     )
 
 
@@ -140,6 +137,20 @@ def get_connection(user: PreviewOwner, session: SessionDependency) -> Connection
     except SQLAlchemyError:
         session.rollback()
     raise HTTPException(503, "persistence_failure")
+
+
+@router.post("/sync-now", response_model=PreviewResult)
+def sync_now(
+    user: PreviewOwner, session: SessionDependency, cipher: Cipher, transport: Transport
+) -> PreviewResult:
+    user_id = user.id
+    session.rollback()  # End the auth read transaction before claiming.
+    failure = None
+    try:
+        return sync_preview(session, user_id=user_id, cipher=cipher, transport=transport)
+    except PreviewSyncError as error:
+        failure = (error.status, error.code)
+    raise HTTPException(*failure)
 
 
 @router.post("/test", response_model=ConnectionTestResult)

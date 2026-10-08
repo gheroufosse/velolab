@@ -37,6 +37,7 @@ class SyncErrorCode(StrEnum):
     INVALID_RECORDS = "invalid_records"
     PERSISTENCE = "persistence_failure"
     DEADLINE = "deadline_exceeded"
+    CREDENTIALS = "credentials_unavailable"
 
 
 @dataclass(frozen=True, slots=True)
