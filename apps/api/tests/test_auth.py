@@ -39,7 +39,13 @@ def auth_client(request: pytest.FixtureRequest) -> Generator[TestClient]:
         engine = create_engine(
             "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
         )
-        Base.metadata.create_all(engine)
+        # Only the portable auth tables; training payloads require PostgreSQL JSONB.
+        Base.metadata.create_all(
+            engine,
+            tables=[
+                Base.metadata.tables[name] for name in ("users", "auth_sessions", "refresh_tokens")
+            ],
+        )
     with Session(engine) as session:
         provision_user(session, "Rider@EXAMPLE.COM", PASSWORD)
 

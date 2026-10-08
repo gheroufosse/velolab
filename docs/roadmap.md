@@ -82,7 +82,7 @@ FastAPI dependency injection.
      with athlete ID/dates; reject duplicate IDs/dates in slice 3) Typed intervals.icu client (httpx, no DB): safety policy, bounded 429
      retries, redacted errors, missing-vs-null preserved, truncation flagged;
      MockTransport synthetic tests
-  2. [ ] `activities` and `wellness_days` models + migration: composite owner
+  2. [x] `activities` and `wellness_days` models + migration: composite owner
      FKs, uniqueness, JSONB payload as truth with re-derivable projections;
      disposable PostgreSQL migration/constraint tests
   3. [ ] Idempotent non-destructive upsert layer: omission preserves, explicit

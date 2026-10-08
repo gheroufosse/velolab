@@ -97,7 +97,14 @@ def test_integration_opt_in_without_test_configuration_is_an_error_not_a_skip() 
     env = {key: value for key, value in os.environ.items() if not key.startswith("TEST_POSTGRES_")}
     env.update(VELOLAB_TEST_DATABASE="1", POSTGRES_USER="real_user", POSTGRES_DB="real")
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "tests/test_initial_migration.py"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "tests/test_initial_migration.py::"
+            "test_initial_migration_matches_models_and_enforces_ownership",
+        ],
         cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,
