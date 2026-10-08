@@ -216,5 +216,72 @@ its composite FK enforces the same owner. There are no HTTP calls or endpoints.
   default establishes that budget. No lease heartbeat or renewal is added.
 
 The caller owns commit/rollback and must refresh loaded ORM state after Core
-updates. These primitives do not complete ADR-025 slice 3: preview orchestration,
-credential-replacement exclusion and endpoints remain separate work.
+updates. These primitives are reused by the bounded preview orchestration below; they
+do not establish full-sync completeness or source parity.
+
+## 7. Bounded recent-preview HTTP boundary (ADR-025 slices 3–4 backend)
+
+`POST /integrations/intervals/sync-now` accepts no caller-selected window or
+athlete. A synchronous handler claims and commits the persisted lease before
+any provider call, snapshots the encrypted credential under that exclusion
+boundary, decrypts with `IntegrationKeyCipher`, checks exact profile identity
+and resolves its IANA timezone. It fetches **one** 30-local-calendar-day activity
+window including the run-start local day, with no wellness/backfill/deletions.
+Same-athlete credential replacement uses the same state lock and returns 409
+while that lease is active. Existing enrollment uses provider label `intervals`;
+the upsert boundary also accepts the earlier `intervals.icu` label while checking
+the exact persisted label, owner and athlete (never rebinding an integration).
+
+`PreviewPolicy` keeps code-level assumptions in one place: 30 days (bounded
+1–30), a 90-second monotonic deadline, 300-second lease TTL, 10-second maximum
+PostgreSQL statement/lock wait, and the existing client policy (15-second
+per-I/O timeout, 1,000 activity/record cap, 4 MiB response cap, two bounded 429
+retries, maximum 30-second advertised wait). The lease must exceed the deadline
+plus in-flight I/O and statement allowance. Deadline checks run before requests,
+after headers/each streamed chunk/JSON decoding, before retry sleeps and before
+persistence/outcome. An in-flight synchronous operation can finish after the
+deadline; its result cannot mark the preview fresh. This is not a background job
+or a hard thread/process cancellation mechanism.
+
+The write transaction fences the same unexpired token **before** upserts, then
+records preview outcome and releases through that token atomically. Failures
+roll back domain writes, preserve previous preview/full-sync markers and record
+only static codes; stale holders cannot overwrite a new lease/outcome. Duplicate
+IDs and nested credential-bearing fields are rejected before any domain writes.
+`last_success_at`, checkpoint and backfill completion never advance. Response:
+`{synced_count, possibly_truncated, last_preview_at, last_error_code}`;
+`synced_count` counts inserted/changed rows, so an identical rerun returns zero.
+Connection metadata exposes preview window/time, attempt status and static error.
+
+`GET /activities` returns cached, owned latest 50 rows with a 51st-row `has_more`
+probe, ordered by provider-local start descending, nulls last, then local UUID
+ascending. List and freshness reads share a repeatable-read snapshot so a
+concurrent sync cannot pair old rows with new preview markers. No provider calls,
+raw payloads or credential fields are returned.
+`coverage` is always `recent_preview`; freshness/truncation/static error describe
+the previous preview, not full history or verified completeness. All preview
+routes require the existing explicit owner/loopback opt-in and bearer auth, and
+success/error responses use `Cache-Control: no-store`. Browser writes/sync must
+not automatically replay after an ambiguous timeout.
+
+Read allowlist mappings were checked against the public
+[OpenAPI v1.0.0 Activity schema](https://intervals.icu/api/v1/docs) and
+[provider Activity field notes](https://forum.intervals.icu/t/25781/16)
+(retrieved 2026-10-08, unauthenticated; **no account data**):
+
+| API field | Provider source | Semantics |
+|---|---|---|
+| `id` | Local activity UUID | Stable cached identity, not upstream external ID |
+| `name`, `type` | `name`, `type` | Strings only |
+| `start_local` | `start_date_local` projection | Naive local time, no browser-zone reinterpretation |
+| `duration_s` | `moving_time` | Integer seconds, no elapsed-time fallback |
+| `distance_m` | `icu_distance` | Numeric meters; provider notes recommend this over `distance`, no fallback |
+| `training_load` | `icu_training_load` projection | Provider load, no locally computed training metric |
+
+All except `id` are nullable. Missing/null/invalid optional list fields become
+gaps; numeric zero remains zero, and booleans/strings are not coerced to numbers.
+Non-destructive upsert merge still preserves earlier values on omission/explicit
+null. Public field/type/unit documentation is not account-specific availability,
+source parity, completeness or operational real-key approval. Synthetic provider
+transports and disposable PostgreSQL verify this boundary; the four evidence
+blockers and full Stage 2 acceptance remain open.

@@ -47,6 +47,12 @@ class PayloadFields:
     activity_utc: str = "start_date"
     activity_local: str = "start_date_local"
     activity_load: str = "icu_training_load"
+    # Public OpenAPI v1.0.0 Activity schema; cached-list read projections.
+    activity_name: str = "name"
+    activity_type: str = "type"
+    activity_duration: str = "moving_time"
+    # Provider field notes recommend icu_distance, not upstream distance.
+    activity_distance: str = "icu_distance"
     wellness_ctl: str = "ctl"
     wellness_atl: str = "atl"
     wellness_ramp_rate: str = "rampRate"
@@ -129,6 +135,36 @@ def _merged_payload(table: Table, incoming: ColumnElement, policy: UpsertPolicy)
     return table.c.payload.op("||", return_type=JSONB)(incoming)
 
 
+def _reject_credentials(value: object) -> None:
+    # ADR-025: raw activity payloads are retained, never auth/profile objects.
+    # Inspect nested mappings too; never include field names/values in errors.
+    forbidden = {
+        "apikey",
+        "icuapikey",
+        "authorization",
+        "auth",
+        "headers",
+        "password",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "secret",
+        "credentials",
+        "encryptedapikey",
+        "profile",
+        "athlete",
+    }
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = key.lower().replace("_", "").replace("-", "")
+            if normalized in forbidden:
+                raise UpsertError("credential_bearing_payload")
+            _reject_credentials(child)
+    elif isinstance(value, list):
+        for child in value:
+            _reject_credentials(child)
+
+
 def _upsert(
     session: Session,
     user_id: UUID,
@@ -141,7 +177,9 @@ def _upsert(
     timestamp = observed_at if observed_at is not None else datetime.now(UTC)
     if timestamp.utcoffset() is None:
         raise UpsertError("invalid_observation_time")
-    if integration.user_id != user_id or integration.provider != "intervals.icu":
+    # Enrollment already uses "intervals"; retain exact persisted namespace,
+    # while supporting the ADR-024 "intervals.icu" label (no rebinding).
+    if integration.user_id != user_id or integration.provider not in ("intervals", "intervals.icu"):
         raise UpsertError("integration_owner_mismatch")
     # A detached/stale/modified integration cannot silently switch the binding.
     with session.no_autoflush:
@@ -149,7 +187,7 @@ def _upsert(
             select(UserIntegration.id).where(
                 UserIntegration.id == integration.id,
                 UserIntegration.user_id == user_id,
-                UserIntegration.provider == "intervals.icu",
+                UserIntegration.provider == integration.provider,
                 UserIntegration.external_athlete_id == integration.external_athlete_id,
             )
         )
@@ -181,6 +219,7 @@ def _upsert(
         else:
             raise UpsertError("invalid_record")
         payload = dict(record.raw)
+        _reject_credentials(payload)
         if not raw_identity or payload.get("id") != raw_identity:
             raise UpsertError("invalid_record_identity")
         if identity in identities:

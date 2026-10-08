@@ -7,9 +7,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from velolab_api.activities import get_activities
+from velolab_api.activities import router as activities_router
 from velolab_api.auth import login
 from velolab_api.auth import router as auth_router
-from velolab_api.integrations import get_connection, save_connection, test_connection
+from velolab_api.integrations import get_connection, save_connection, sync_now, test_connection
 from velolab_api.integrations import router as integration_router
 
 # INFO transport logs include athlete URLs. No body or exception-local capture
@@ -20,7 +22,8 @@ for logger_name in ("httpx", "httpcore"):
 app = FastAPI(title="velolab-api")
 app.include_router(auth_router)
 app.include_router(integration_router)
-_CONNECTION_ENDPOINTS = (get_connection, test_connection, save_connection)
+app.include_router(activities_router)
+_CONNECTION_ENDPOINTS = (get_connection, test_connection, save_connection, sync_now, get_activities)
 
 
 @app.middleware("http")
