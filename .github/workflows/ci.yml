@@ -105,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # apps/web has no package.json until Stage 3. Until then, skip the
+      # apps/web has a package.json since Stage 3. Until then, skip the
       # rest of this job rather than fail when this workflow file itself
       # changes (job-level `if:` runs before checkout, so it can't test
       # for the lockfile directly — hence this step-level guard).

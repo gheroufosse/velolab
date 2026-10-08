@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Dark-first (ADR-016): the page is dark by default, no light variant yet. */
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+}
