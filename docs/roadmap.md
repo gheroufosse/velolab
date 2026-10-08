@@ -76,8 +76,21 @@ FastAPI dependency injection.
   Crypto/settings verified locally, **not deployed**: key delivery and backup/
   restore approval remain required before real-key storage; no credential
   enrollment, database re-encryption or sync workflow is implemented.
-- [ ] Typed API client with API-key auth
-- [ ] `activities` and `wellness` models
+- [ ] Evidence-independent slices (ADR-024), in order, each a separate PR:
+  1. [ ] Typed intervals.icu client (httpx, no DB): safety policy, bounded 429
+     retries, redacted errors, missing-vs-null preserved, truncation flagged;
+     MockTransport synthetic tests
+  2. [ ] `activities` and `wellness_days` models + migration: composite owner
+     FKs, uniqueness, JSONB payload as truth with re-derivable projections;
+     disposable PostgreSQL migration/constraint tests
+  3. [ ] Idempotent non-destructive upsert layer: omission preserves, explicit
+     null policy configurable (default preserve), no delete path
+  4. [ ] Sync state with fenced lease and throttle decision; failures never
+     advance `last_success_at`; concurrency tests on disposable PostgreSQL
+
+  Unverified provider behaviour stays in named, configurable settings (see
+  ADR-024). Orchestration, backfill, reconciliation and real-key enrollment
+  wait for contract evidence and ADR-023 approvals.
 - [ ] One-shot sync endpoint, 24-month backfill
 - [ ] Incremental and idempotent re-sync, including historical edits/deletions and
   revised daily metrics; explicit reconciliation/rescan policy

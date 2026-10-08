@@ -529,6 +529,124 @@ requirements change. Any relaxation of ADR-021 requires a separate decision.
 
 ---
 
+## ADR-024 — Evidence-independent Stage 2 slices before sync orchestration
+
+**Status.** Accepted plan for the next Stage 2 work. Each slice still needs
+owner authorization and an ADR-017 ownership split (domain mapping and merge
+rules are owner-written unless the owner delegates them explicitly).
+
+**Context.** The ADR-023 encryption module is merged. The
+[data contract](intervals-data-contract.md) evidence blockers (range
+completeness, corrections/deletions, explicit clearing, parity/time) remain
+open: there is no sanitized provider evidence, and no real key may be stored
+until ADR-023's operational gates are approved. The owner-reported probe
+success proves reachability only.
+
+**Decision.** Build four small, independently mergeable slices, in this order,
+that need neither live provider data nor a stored key. None of them adds a
+sync endpoint, credential enrollment, deletion/reconciliation logic or UI.
+
+1. **Typed intervals.icu client (no DB).** Promote `httpx` from dev to runtime
+   dependency; a synchronous client (the app is synchronous) receives the
+   decrypted key and the bound athlete ID per call/instance and never reads
+   settings or the database. Methods: athlete profile, activity listing and
+   wellness listing by local-date window. Carry over the probe's safety policy:
+   explicit opaque athlete ID (reject `0` and unsafe characters, one encoded
+   path segment), fixed HTTPS host, no redirects or environment proxies,
+   finite timeouts, response-size and record caps, Basic `API_KEY` auth. 429
+   handling: bounded retries honouring `Retry-After` up to a maximum wait,
+   conservative fallback backoff when absent, then a typed rate-limit failure.
+   Errors and `repr` carry only static codes/HTTP status — never key, URL,
+   query dates, IDs or bodies. Records are returned with their raw mapping
+   intact so *missing* and *explicit null* stay distinguishable; typed views
+   cover only identity/date fields. A listing whose size reaches the requested
+   limit is reported as *possibly truncated*, never as complete.
+   Tests: `httpx.MockTransport` with synthetic data only; real connections fail.
+2. **`activities` and `wellness_days` models + one Alembic migration.** Add
+   `UNIQUE (id, user_id)` on `user_integrations` and composite FKs
+   `(integration_id, user_id)` from both tables (the `refresh_tokens` pattern),
+   so row owner always equals integration owner. Keys:
+   `(user_id, integration_id, provider_activity_id)` (Intervals `id`, text, not
+   upstream `external_id`) and `(user_id, integration_id, local_date)` where
+   `local_date` is the provider-supplied wellness date, never recomputed. The
+   JSONB `payload` is the source of truth; promoted columns (activity UTC
+   instant, provider-local start, load; wellness CTL/ATL/ramp rate/resting HR/
+   weight and carried-over flags) are nullable projections re-derivable from
+   `payload` by one mapping function, so a corrected mapping needs no data
+   loss. Columns carry no unit claim until parity evidence exists. No TSB
+   column (derived on read, ADR-008/022). Bookkeeping: `first_seen_at`,
+   `last_seen_at`, `updated_at`. No deletion/tombstone columns yet.
+   Tests on disposable PostgreSQL: upgrade/downgrade, duplicate rejected,
+   cross-owner integration reference rejected, cascade on user delete.
+3. **Idempotent upsert layer.** Owner-scoped functions taking an integration
+   and parsed records, using `INSERT ... ON CONFLICT DO UPDATE`. Merge rule:
+   omitted payload keys preserve stored values; explicit nulls follow a
+   configurable clear policy whose **default is preserve** until blocker 3 is
+   evidenced; projections are recomputed from the merged payload; unchanged
+   rows are not rewritten (`updated_at` stays meaningful). The layer exposes
+   no delete operation and never infers absence. Records whose athlete ID is
+   present and differs from the bound athlete are rejected, not stored.
+   Tests (disposable PostgreSQL, synthetic records): rerun creates no
+   duplicates or writes, omission preserves a known value, explicit null under
+   both policies, zero is stored as zero, mismatched athlete rejected.
+4. **Sync state, lease and throttle (no orchestration).** One
+   `integration_sync_state` row per integration (composite owner FK) with
+   `last_attempt_at`, `last_attempt_status`, static `last_error_code` (never
+   provider text), `last_success_at`, a backfill checkpoint and
+   `backfill_complete`. Overlapping syncs are coalesced by a **fenced lease**:
+   a conditional `UPDATE` claims `lease_token`/`lease_expires_at` only if free
+   or expired; every checkpoint/success write is conditional on the same token,
+   so a stale run that lost its lease cannot write. A lease (not a row lock or
+   transaction-scoped lock) fits per-window commits spanning HTTP calls and
+   recovers from crashes by expiry. A pure throttle function decides automatic
+   sync from `last_success_at` only; manual force bypasses the throttle, never
+   the lease. Failed attempts never advance `last_success_at`.
+   Tests (disposable PostgreSQL): concurrent claims yield one winner, expired
+   lease takeover, fenced write from a stale holder fails, failure leaves
+   success marker unchanged, throttle boundary.
+
+**Configurable or flagged assumptions.** Keep each in one named place, with a
+comment citing the open blocker; none is a verified provider fact:
+
+- Explicit athlete ID only; alias `0` never used (cause of its failure unknown).
+- `User-Agent` value (default `Mozilla/5.0`, probe evidence only) and timeouts.
+- No `fields` filter (it suppresses nulls); unsuffixed `/wellness` with
+  `Accept: application/json`.
+- Listing `limit`, record cap and "reached limit ⇒ possibly truncated".
+- Window overlap of at least one local day (`oldest` inclusivity unverified).
+- 429 retry count, maximum honoured `Retry-After`, fallback backoff.
+- Explicit-null clear policy (default preserve).
+- Payload field names used for projections and carried-over flags
+  (`tempWeight`, `tempRestingHR`); units unverified.
+- Wellness date taken as supplied; timezone-change rekeying undecided.
+- Strava stubs stored as returned; whether they count in totals is a Stage 4
+  decision after evidence.
+- Lease TTL and the 24-hour throttle (ADR-007).
+
+**Deferred until evidence or approval.** Sync orchestration/endpoint and the
+24-month backfill run, completeness and deletion/reconciliation policy,
+historical rescan window, credential enrollment and real-key storage (ADR-023
+operational gates), recorded fixtures (sanitized evidence only), and any claim
+of source parity. Slices 1–4 may be merged without these; Stage 2 is not done.
+
+**Why.** These pieces are dictated by ADR-007/011/022/023 regardless of the
+open answers, and isolating every unverified provider behaviour as a setting
+lets evidence change a value rather than a schema or a merge algorithm.
+Payload-as-truth projections and a conservative non-destructive merge make an
+early wrong guess recoverable.
+
+**Rejected.** Waiting for all evidence before any code (stalls learning and
+the parts that do not depend on it); building the backfill endpoint now
+(would encode completeness assumptions and needs a real key); generating an
+OpenAPI client (large surface, hides the safety policy); advisory or row locks
+held across provider calls; fictitious "recorded" fixtures.
+
+**Revisit when.** Sanitized evidence resolves a contract blocker (update the
+corresponding setting/default), or ADR-023's real-key gates are approved and
+orchestration starts.
+
+---
+
 ## Open questions
 
 - Offline or PWA support — wanted eventually?
