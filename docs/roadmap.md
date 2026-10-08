@@ -67,9 +67,10 @@ FastAPI dependency injection.
 
 ## Stage 2 — intervals.icu client and sync
 
-- [ ] Document provider/data contract before implementation: identity, timezone,
-  units, week comparisons, missing/null/zero semantics and metric date alignment
-  (ADR-022)
+- [ ] Finalize the [provider/data contract draft](intervals-data-contract.md)
+  before sync implementation: identity, timezone, units, week comparisons,
+  missing/null/zero semantics and metric date alignment (ADR-022). Public
+  schema research is recorded; evidence blockers remain open.
 - [ ] Implement and verify API-key encryption before storing real integration
   credentials; document key backup and rotation (ADR-023)
 - [ ] Typed API client with API-key auth

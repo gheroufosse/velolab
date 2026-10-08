@@ -1,6 +1,21 @@
-# Session handoff — Stage 1 backend authentication
+# Session handoff — Stage 2 contract draft
 
-## Current handoff — refresh/session slice (ADR-021)
+## Current handoff — Stage 2 research (ADR-022)
+
+Stage 1 auth PR #13 merged as `8c5268977878d75e0786a2b7d97552cf515640d2`;
+Stage 1 evidence PR #14 merged as `c72357a79cd9a694904d86dfad38df08f7d8a5df`.
+Final-main CI [run 37061380496](https://github.com/gheroufosse/velolab/actions/runs/37061380496)
+passed API checks and 99 PostgreSQL-enabled tests with zero skips and cleanup.
+The Stage 2 [Intervals data contract](intervals-data-contract.md) is a **draft**
+from public sources, not proof of account-specific behavior or sync completion.
+Next: resolve range/completeness, historical corrections/deletions, explicit
+clearing versus omission, units/date parity and timezone-change policy with
+approved sanitized provider evidence before finalizing sync semantics. ADR-023
+key encryption/backup/rotation is a gate before storing a real API key. No
+sync/UI, personal API calls, production commands or publication in this draft.
+The Stage 1 records below remain historical and are not Stage 2 authorization.
+
+## Historical handoff — refresh/session slice (ADR-021)
 
 The owner explicitly approved the seven-day fixed refresh policy and autonomous
 Codex implementation, disposable PostgreSQL tests and independent review,
