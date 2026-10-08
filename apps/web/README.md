@@ -1,8 +1,11 @@
 # velolab-web
 
 React + TypeScript frontend for velolab. Current scope is
-[ADR-025](../../docs/decisions.md) slice 1 only: browser login, a protected
-Connection placeholder, logout and reload recovery. No dashboard yet.
+[ADR-025](../../docs/decisions.md) slices 1–2: browser login, a protected
+Connection page with separate Test and Save actions, logout and reload recovery.
+No sync or dashboard yet. Real-key entry still requires the operational approvals
+and disposable backup/restore verification in ADR-025; use synthetic credentials
+until those gates are met.
 
 Stack: Vite (dev server + bundler), React 19, TypeScript, Tailwind CSS 4,
 TanStack Query, ESLint, Vitest. Package manager: **npm** (`package-lock.json` is
@@ -66,15 +69,35 @@ npm run build       # typecheck + production bundle in dist/
   `App.tsx`) subscribes to state kept outside React, here the coordinator.
   TanStack Query (`useQuery`) caches server data; it is cleared on every login,
   logout or recovery and never holds tokens.
+- **Connection form and secret lifetime.** Athlete ID and UI feedback use React
+  state. The password-style API-key field is *uncontrolled*: its value stays in
+  the DOM rather than React state. Test and Save send one direct authenticated
+  request each, without TanStack mutations (which retain submitted variables),
+  retries or automatic 401 replay. The field clears immediately on submit and
+  on unmount/account change; every action requires key re-entry, even after a
+  successful Test. JavaScript cannot guarantee secure memory erasure.
+- **Test is not Save.** Test only verifies identity/timezone. Save independently
+  verifies and persists credentials server-side. Only allowlisted connection
+  metadata goes into the query cache; stored keys are never returned or
+  prefilled. A failed/ambiguous save does not establish whether storage changed:
+  use **Check saved status** before a manual retry. Errors use static UI copy,
+  not server/provider bodies.
 
 ## Layout
 
 - `src/auth/coordinator.ts` — auth state machine (framework-free, unit-tested).
 - `src/auth/browser.ts` — wires it to `fetch`, `navigator.locks`, `BroadcastChannel`.
 - `src/api.ts` — typed protected `getJson` and `/auth/me` parsing.
-- `src/pages/` — login screen and Connection placeholder.
+- `src/connection.ts` — safe metadata parsing and direct Test/Save requests.
+- `src/pages/` — login screen and Connection form.
 - `src/auth/coordinator.test.ts` — single-flight refresh, lost refresh response,
   logout, cross-tab and unsupported-browser behaviour.
 
+- `src/pages/ConnectionPage.test.tsx` — React Testing Library/jsdom workflow
+  tests with the real auth coordinator and synthetic HTTP/browser coordination
+  boundaries: secret clearing, cache exclusion, Test versus Save, conflict,
+  unauthorized and ambiguous failures, existing metadata and late-response cleanup.
+
 Not covered by automated tests: real multi-tab behaviour in a browser (ADR-025
-asks for manual verification with real tabs) and the React screens.
+asks for manual verification with real tabs), visual browser inspection and live
+backend/provider integration. No real keys or production data are used by tests.

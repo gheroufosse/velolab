@@ -25,5 +25,5 @@ export default defineConfig({
   // Loopback only (ADR-025): never listen on the LAN until TLS exists.
   server: { host: "127.0.0.1", port: 5173, strictPort: true, proxy: apiProxy },
   preview: { host: "127.0.0.1", port: 4173, strictPort: true, proxy: apiProxy },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  test: { environment: "node", include: ["src/**/*.test.{ts,tsx}"] },
 });

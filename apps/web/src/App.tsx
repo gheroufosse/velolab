@@ -28,7 +28,8 @@ export default function App() {
     case "login-required":
       return <LoginScreen reason={auth.reason} />;
     case "authenticated":
-      return <ConnectionPage />;
+      // A cross-tab account change must also discard transient form inputs.
+      return <ConnectionPage key={auth.generation} />;
   }
 }
 

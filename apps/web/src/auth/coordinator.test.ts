@@ -135,14 +135,20 @@ describe("refresh coordination", () => {
     );
     await coordinator.start();
 
-    const write = await coordinator.fetch("/api/write", { method: "PUT" });
-    expect(write.status).toBe(401); // returned as-is, no automatic refresh/replay
+    await expect(coordinator.fetch("/api/write", { method: "PUT" })).rejects.toBeInstanceOf(AuthRequiredError);
     expect(count("/api/auth/refresh")).toBe(1);
-
-    await expect(
-      coordinator.fetch("/api/read", {}, { replayOnUnauthorized: true }),
-    ).rejects.toBeInstanceOf(AuthRequiredError);
+    expect(count("/api/write")).toBe(1);
     expect(coordinator.getState()).toMatchObject({ status: "login-required", reason: "expired" });
+
+    const readTab = makeTab(({ path }) =>
+      path === "/api/auth/refresh" ? tokenBody("t") : json({}, 401),
+    );
+    await readTab.coordinator.start();
+    await expect(
+      readTab.coordinator.fetch("/api/read", {}, { replayOnUnauthorized: true }),
+    ).rejects.toBeInstanceOf(AuthRequiredError);
+    expect(readTab.count("/api/read")).toBe(2);
+    expect(readTab.coordinator.getState()).toMatchObject({ status: "login-required", reason: "expired" });
   });
 });
 
@@ -209,7 +215,7 @@ describe("login and logout", () => {
     const { coordinator, calls } = makeTab(({ path, init }) =>
       path === "/api/auth/login" && JSON.parse(String(init.body)).password === "correct horse"
         ? tokenBody("login-token")
-        : json({}, 401),
+        : json({}, path === "/api/data" ? 200 : 401),
     );
     await coordinator.start(); // first visit: 401 -> login required
 
