@@ -29,7 +29,9 @@ def test_migrations_use_supplied_connection_without_loading_application_settings
     try:
         with engine.connect() as connection:
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            # The later training revision requires PostgreSQL (JSONB/composite FK
+            # DDL); this portable seam checks connection routing, not that schema.
+            command.upgrade(config, "c437ce183e2b")
             assert "users" in inspect(connection).get_table_names()
             command.downgrade(config, "base")
             assert "users" not in inspect(connection).get_table_names()

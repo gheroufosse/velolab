@@ -1,8 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    Boolean,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -11,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from velolab_api.db import Base
@@ -27,7 +31,10 @@ class User(Base):
 
 class UserIntegration(Base):
     __tablename__ = "user_integrations"
-    __table_args__: tuple[UniqueConstraint] = (UniqueConstraint("user_id", "provider"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider"),
+        UniqueConstraint("id", "user_id", name="uq_user_integrations_id_user_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey(column="users.id", ondelete="CASCADE"))
@@ -67,3 +74,82 @@ class RefreshToken(Base):
     session_id: Mapped[UUID] = mapped_column()
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     spent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Activity(Base):
+    """Payload is truth; nullable projections are rebuildable (ADR-024 slice 2).
+
+    Provider identity is Intervals `id`, never upstream `external_id`.
+    Mapping/units remain unverified (contract blocker 4); slice 3 will own the
+    single projection mapping and bookkeeping updates, not this schema.
+    """
+
+    __tablename__ = "activities"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "integration_id", "provider_activity_id", name="uq_activities_identity"
+        ),
+        ForeignKeyConstraint(
+            ["integration_id", "user_id"],
+            ["user_integrations.id", "user_integrations.user_id"],
+            ondelete="CASCADE",
+            name="fk_activities_integration_owner",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    integration_id: Mapped[UUID] = mapped_column()
+    provider_activity_id: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
+    start_date_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    start_date_local: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+    training_load: Mapped[float | None] = mapped_column(Float)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WellnessDay(Base):
+    """Provider-supplied date keys the day; never derive it from UTC.
+
+    Payload is truth, including missing/null and tempWeight/tempRestingHR flags.
+    Nullable projections make no unit or measured-value claim (blocker 4).
+    """
+
+    __tablename__ = "wellness_days"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "integration_id", "local_date", name="uq_wellness_days_identity"
+        ),
+        ForeignKeyConstraint(
+            ["integration_id", "user_id"],
+            ["user_integrations.id", "user_integrations.user_id"],
+            ondelete="CASCADE",
+            name="fk_wellness_days_integration_owner",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    integration_id: Mapped[UUID] = mapped_column()
+    local_date: Mapped[date] = mapped_column(Date)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB(none_as_null=True))
+    ctl: Mapped[float | None] = mapped_column(Float)
+    atl: Mapped[float | None] = mapped_column(Float)
+    ramp_rate: Mapped[float | None] = mapped_column(Float)
+    resting_hr: Mapped[float | None] = mapped_column(Float)
+    weight: Mapped[float | None] = mapped_column(Float)
+    weight_carried_over: Mapped[bool | None] = mapped_column(Boolean)
+    resting_hr_carried_over: Mapped[bool | None] = mapped_column(Boolean)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
