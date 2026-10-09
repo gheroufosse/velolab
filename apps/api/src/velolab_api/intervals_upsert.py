@@ -15,10 +15,23 @@ from retained payload even when the incoming record itself is unchanged.
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
-from sqlalchemy import DateTime, Table, bindparam, func, literal, literal_column, or_, select
+from sqlalchemy import (
+    DateTime,
+    Numeric,
+    Table,
+    bindparam,
+    case,
+    cast,
+    func,
+    literal,
+    literal_column,
+    or_,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
@@ -77,13 +90,27 @@ class UpsertPolicy:
 DEFAULT_UPSERT_POLICY = UpsertPolicy()
 
 
+def _numeric_projection(payload: ColumnElement, field_name: str) -> ColumnElement:
+    # JSON strings (even "42") and numbers outside float8 range are gaps.
+    # The inner CASE guards the numeric cast for non-number JSON values.
+    value = payload.op("->", return_type=JSONB)(field_name)
+    in_range = case(
+        (
+            func.jsonb_typeof(value) == "number",
+            func.abs(cast(payload[field_name].as_string(), Numeric))
+            <= Decimal("1.7976931348623157e308"),
+        ),
+        else_=False,
+    )
+    return case((in_range, payload[field_name].as_float()), else_=None)
+
+
 def _projections(
     payload: ColumnElement, model: type[Activity] | type[WellnessDay], fields: PayloadFields
 ) -> dict[str, ColumnElement]:
     """Single mapping, used for both incoming and merged payloads (blocker 4).
 
-    Casts deliberately fail on malformed values instead of fabricating metrics.
-    JSON null/missing project to SQL NULL; numeric zero and boolean false survive.
+    Non-numeric/out-of-range JSON projects to a gap; malformed dates/flags still fail.
     Provider-local start is stored without conversion; UTC instant is separate.
     """
     if model is Activity:
@@ -94,14 +121,14 @@ def _projections(
             "start_date_local": payload[fields.activity_local]
             .as_string()
             .cast(DateTime(timezone=False)),
-            "training_load": payload[fields.activity_load].as_float(),
+            "training_load": _numeric_projection(payload, fields.activity_load),
         }
     return {
-        "ctl": payload[fields.wellness_ctl].as_float(),
-        "atl": payload[fields.wellness_atl].as_float(),
-        "ramp_rate": payload[fields.wellness_ramp_rate].as_float(),
-        "resting_hr": payload[fields.wellness_resting_hr].as_float(),
-        "weight": payload[fields.wellness_weight].as_float(),
+        "ctl": _numeric_projection(payload, fields.wellness_ctl),
+        "atl": _numeric_projection(payload, fields.wellness_atl),
+        "ramp_rate": _numeric_projection(payload, fields.wellness_ramp_rate),
+        "resting_hr": _numeric_projection(payload, fields.wellness_resting_hr),
+        "weight": _numeric_projection(payload, fields.wellness_weight),
         "weight_carried_over": payload[fields.wellness_weight_carried_over].as_boolean(),
         "resting_hr_carried_over": payload[fields.wellness_resting_hr_carried_over].as_boolean(),
     }
@@ -138,26 +165,25 @@ def _merged_payload(table: Table, incoming: ColumnElement, policy: UpsertPolicy)
 def _reject_credentials(value: object) -> None:
     # ADR-025: raw activity payloads are retained, never auth/profile objects.
     # Inspect nested mappings too; never include field names/values in errors.
-    forbidden = {
+    forbidden_parts = (
         "apikey",
-        "icuapikey",
-        "authorization",
-        "auth",
-        "headers",
-        "password",
-        "token",
-        "accesstoken",
-        "refreshtoken",
         "secret",
-        "credentials",
-        "encryptedapikey",
-        "profile",
-        "athlete",
-    }
+        "token",
+        "password",
+        "passwd",
+        "bearer",
+        "authorization",
+        "credential",
+        "privatekey",
+        "accesskey",
+        "cookie",
+    )
+    # Keep the previously forbidden non-credential objects and generic auth fields.
+    forbidden_exact = {"auth", "headers", "profile", "athlete"}
     if isinstance(value, dict):
         for key, child in value.items():
-            normalized = key.lower().replace("_", "").replace("-", "")
-            if normalized in forbidden:
+            normalized = "".join(char for char in key.lower() if char.isalnum())
+            if normalized in forbidden_exact or any(part in normalized for part in forbidden_parts):
                 raise UpsertError("credential_bearing_payload")
             _reject_credentials(child)
     elif isinstance(value, list):
