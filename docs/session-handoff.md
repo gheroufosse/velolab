@@ -1,4 +1,15 @@
-# Session handoff — Stage 2 contract draft
+# Session handoff — ADR-025 preview merged
+
+## Current handoff — local preview ready for first real-key run
+
+ADR-025 slices 1–4 merged (PRs #24–#28): web login, connection test/save,
+sync-now, cached activity list. ADR-026 waives key backup/restore for
+single-owner local use. Next, owner-run: create keyring with
+`./scripts/gen-integration-key.sh ~/.config/velolab/keyring.json`, run real-use
+migrations/provisioning (needs explicit approval), start
+`OWNER_ID=<uuid> ./scripts/dev-api.sh` + Vite, enter API key in Connection.
+Contract evidence blockers (completeness, units, timezone) remain open; no full
+sync/dashboard. Nothing here is live-verified.
 
 ## Current handoff — Stage 2 research (ADR-022)
 

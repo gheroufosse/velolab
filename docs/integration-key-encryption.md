@@ -154,14 +154,19 @@ must use explicit response allowlists and generic error handling across provider
 and database failures, and must never expose either ciphertext or plaintext to
 the browser. This slice neither accepts nor stores real credentials.
 
-## Local key-file delivery for the ADR-025 preview (approval still required)
+## Local key-file delivery for the ADR-025 preview
+
+> **ADR-026 waives key backup/restore** for single-owner local use. Steps
+> below about separate backup, restore proof, retention and downtime are not
+> required; loss recovery is: new keyring + re-enter the API key. Real-use DB
+> commands and live provider calls still need explicit approval.
 
 Proposed custody flow, **not permission to generate/use a real-use key or start
 an API against real-use PostgreSQL**:
 
-1. Owner approves an absolute custody path outside the repository and database,
-   in an owner-only directory (0700), plus the separate encrypted backup location,
-   restore procedure, maintenance downtime and historical-key retention window.
+1. Choose an absolute custody path outside the repository and database,
+   in an owner-only directory (0700) (`~/.config/velolab/keyring.json` for
+   `scripts/dev-api.sh`). Backup/restore/retention waived (ADR-026).
 2. Run `./scripts/gen-integration-key.sh /absolute/private/path/keyring.json` once.
    It generates 256 random bits, stores the unpadded base64url key under
    `local-v1` in a JSON keyring, creates a 0600 file without printing material,
@@ -200,12 +205,13 @@ an API against real-use PostgreSQL**:
    Vite from this environment or create any `VITE_*` secret variable. The
    launcher must check custody permissions remain 0700/0600 before use and
    fail if the file is missing; it must not regenerate it.
-4. Before entering a real provider key, back up this keyring **separately and
+4. ~~Before entering a real provider key, back up this keyring **separately and
    encrypted**, then prove restore using generated secrets on the dedicated
    disposable PostgreSQL instance. Restore both the matching DB and keyring;
    validate AES-GCM decryption against the restored row IDs/owner/provider/
    athlete binding. Record owner approval and verification evidence here; the
-   current synthetic connection tests are not backup/restore verification.
+   current synthetic connection tests are not backup/restore verification.~~
+   Waived by ADR-026.
 
 Backend preview configuration is server-only:
 `INTEGRATION_PREVIEW_ENABLED=true`, `INTEGRATION_PREVIEW_OWNER_ID=<owner UUID>`,
@@ -304,9 +310,8 @@ Future rotation workflows must still exercise interrupted rotation/resume,
 maintenance exclusion, mixed-key rollback and backup/key mismatch against the
 dedicated disposable PostgreSQL instance (ADR-019), never the real-use DB.
 
-**Unresolved operational gate:** owner approval of server key delivery, separate
-encrypted backup and restore process, maintenance access/downtime and retention
-window is required before deployment or real-key entry. Publication requires
+**Operational gate (amended by ADR-026):** backup/restore/retention waived for
+single-owner local use; still required before deployment or any second user. Publication requires
 separate approval. Autonomous authorization covered this implementation/test
 slice only: this document is not authorization to run production commands,
 publish the branch, or bypass the sync contract's independent evidence blockers.
