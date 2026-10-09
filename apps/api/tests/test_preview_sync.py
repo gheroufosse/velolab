@@ -270,7 +270,7 @@ def test_truncation_and_owned_ordering_limit(connection: Harness) -> None:
         [{"id": "valid"}, {"id": "valid"}],
         [{"id": "valid"}, {"id": "bad", "icu_api_key": KEY}],
         [{"id": "valid"}, {"id": "bad", "nested": {"access_token": KEY}}],
-        [{"id": "valid"}, {"id": "bad", "icu_training_load": "invalid"}],
+        [{"id": "valid"}, {"id": "bad", "client_secret": KEY}],
     ],
 )
 def test_invalid_batch_never_persists_partial_rows(

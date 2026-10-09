@@ -162,9 +162,11 @@ There are no endpoints, provider calls, sync markers or delete operations.
   and athlete field names. Its defaults, carried-over flags and units are
   **unverified** (blocker 4). One mapping function projects both insert payloads
   and atomically merged update payloads. Changed mappings can reproject retained
-  data; typed record date views do not override raw payload truth. Malformed
-  projection casts fail rather than fabricate values. Wellness keys remain the
-  supplied local date; no timezone rekeying is inferred.
+  data; typed record date views do not override raw payload truth. Numeric
+  projections take only in-range JSON numbers; other types and out-of-range
+  numbers project to a gap (ADR-025), while malformed dates/booleans still fail
+  the batch. Wellness keys remain the supplied local date; no timezone rekeying
+  is inferred.
 - `first_seen_at` is immutable. `updated_at` and `last_seen_at` change only for
   payload/projection changes. A distinctness condition prevents physical writes
   on identical reruns, including changes ignored by the preserve policy.

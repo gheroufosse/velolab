@@ -3,9 +3,14 @@
 Failure inventory: reruns rewrite rows; partial/null updates erase known data;
 zero/false become missing; projections diverge from merged payload; duplicate
 identities or wrong athlete/owner pollute a batch; failed writes leave partial
-work; concurrent partial updates lose fields. All are exercised against the
-existing disposable PostgreSQL boundary, not mocks/SQLite. No provider parity,
-listing completeness, deletion, HTTP, leases or sync freshness claims here.
+work; concurrent partial updates lose fields. Credential-like keys in nested
+payloads risk persisted secrets (reject before writes); nonnumeric JSON metrics
+risk coerced values instead of gaps (project only numbers, including zero).
+These use the existing disposable PostgreSQL boundary, not mocks/SQLite. No
+provider parity, listing completeness, deletion, HTTP, leases or sync freshness
+claims here. Other invalid inputs, stale binding, retries and concurrency are
+covered by existing tests; resource/authorization risks outside this service
+are out of scope.
 """
 
 from collections.abc import Mapping, Sequence
@@ -302,7 +307,12 @@ def test_failed_batch_and_outer_rollback_leave_no_partial_records(
     second = "z-second" if kind == "activities" else "2026-10-09"
     with Session(database) as session:
         with pytest.raises(DataError):
-            write(session, kind, [{"id": first}, {"id": second, metric(kind): "not-numeric"}])
+            invalid = (
+                {"start_date": "not-a-date"}
+                if kind == "activities"
+                else {"tempWeight": "not-a-boolean"}
+            )
+            write(session, kind, [{"id": first}, {"id": second, **invalid}])
         session.commit()  # even a caller catching the error cannot commit partial batch writes
     with Session(database) as session:
         model = Activity if kind == "activities" else WellnessDay
@@ -311,6 +321,69 @@ def test_failed_batch_and_outer_rollback_leave_no_partial_records(
         session.rollback()
     with Session(database) as session:
         assert session.scalars(select(model)).all() == []
+
+
+@pytest.mark.parametrize(
+    "suspicious",
+    [
+        {"api_key_value": "synthetic"},
+        {"client_secret": "synthetic"},
+        {"secret_key": "synthetic"},
+        {"bearer_token": "synthetic"},
+        {"details": [{"Auth.Secret-Key": "synthetic"}]},
+    ],
+)
+def test_credential_variants_reject_entire_batch(
+    database: Engine, suspicious: dict[str, object]
+) -> None:
+    with Session(database) as session:
+        with pytest.raises(UpsertError, match="^credential_bearing_payload$"):
+            write(session, "activities", [{"id": "a-safe"}, {"id": "z-unsafe", **suspicious}])
+        session.commit()
+    with Session(database) as session:
+        assert session.scalars(select(Activity)).all() == []
+        assert write(session, "activities", [{"id": "a-safe", "icu_training_load": 42}]) == 1
+        session.commit()
+    with Session(database) as session:
+        stored = row(session, "activities")
+        assert isinstance(stored, Activity)
+        assert stored.training_load == 42
+
+
+@pytest.mark.parametrize("kind", ["activities", "wellness_days"])
+def test_numeric_projections_require_json_numbers(database: Engine, kind: str) -> None:
+    keys = (
+        ["icu_training_load"]
+        if kind == "activities"
+        else ["ctl", "atl", "rampRate", "restingHR", "weight"]
+    )
+    columns = (
+        ["training_load"]
+        if kind == "activities"
+        else ["ctl", "atl", "ramp_rate", "resting_hr", "weight"]
+    )
+    with Session(database) as session:
+        assert write(session, kind, [{"id": identity(kind), **dict.fromkeys(keys, "42")}]) == 1
+        session.commit()
+    with Session(database) as session:
+        stored = row(session, kind)
+        assert all(getattr(stored, col) is None for col in columns)
+        assert write(session, kind, [{"id": identity(kind), **dict.fromkeys(keys, 42)}]) == 1
+        session.commit()
+    with Session(database) as session:
+        stored = row(session, kind)
+        assert all(getattr(stored, col) == 42 for col in columns)
+        # JSON number equivalent to 1e999, without Python float overflow to infinity.
+        assert write(session, kind, [{"id": identity(kind), **dict.fromkeys(keys, 10**999)}]) == 1
+        session.commit()
+    with Session(database) as session:
+        stored = row(session, kind)
+        assert all(getattr(stored, col) is None for col in columns)
+        assert write(session, kind, [{"id": identity(kind), **dict.fromkeys(keys, 0)}]) == 1
+        session.commit()
+    with Session(database) as session:
+        stored = row(session, kind)
+        assert all(getattr(stored, col) == 0 for col in columns)
 
 
 @pytest.mark.parametrize("kind", ["activities", "wellness_days"])
