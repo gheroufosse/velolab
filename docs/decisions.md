@@ -890,6 +890,32 @@ Widening this exception requires an explicit decision.
 
 ---
 
+## ADR-026 — Single-owner local use: key backup/restore waived
+
+**Status.** Owner-approved amendment to ADR-023/025 operational gate, for
+single-owner, single-machine, loopback-only use. Not a deployment decision.
+
+**Context.** The only secret the keyring protects is the owner's intervals.icu
+API key, which the owner can re-issue at any time. Activities re-sync from the
+provider. There is no second user, no second machine and no restore target.
+
+**Decision.** Waive the separately encrypted keyring backup, the disposable-
+PostgreSQL restore proof and the retention window required by ADR-023/025
+before real-key entry. Keep everything else: 256-bit AES-GCM key in a 0600 file
+in a 0700 directory outside the repo and DB, injected into the backend process
+environment only by `scripts/dev-api.sh` (never `.env`, args, or Vite), preview
+opt-in with owner UUID, loopback listeners only.
+
+**Loss recovery.** If the keyring is lost or replaced, stored ciphertext is
+unreadable: generate a new keyring and re-enter the API key via Connection.
+Optionally revoke the old key in intervals.icu. Cached activities remain.
+
+**Revisit when.** Another user, another machine, LAN/VPS exposure, or data that
+cannot be re-fetched from the provider is introduced. Real-use DB commands and
+live provider calls still need explicit approval each time.
+
+---
+
 ## Open questions
 
 - Offline or PWA support — wanted eventually?
