@@ -67,6 +67,10 @@ FastAPI dependency injection.
 
 ## Stage 2 — intervals.icu client and sync
 
+> **Preview (ADR-025/026):** loopback-only browser login, connection test/save,
+> 30-day sync-now and cached activity list are merged (PRs #24–#28). This is
+> not Stage 2/3 completion; full sync and dashboard items below remain open.
+
 - [ ] Finalize the [provider/data contract draft](intervals-data-contract.md)
   before sync implementation: identity, timezone, units, week comparisons,
   missing/null/zero semantics and metric date alignment (ADR-022). Public
