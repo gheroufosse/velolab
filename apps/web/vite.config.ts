@@ -13,10 +13,10 @@ const API_ORIGIN = "http://127.0.0.1:8000";
 // header is forwarded unchanged (changeOrigin stays false), which is what
 // FastAPI's CSRF check compares against AUTH_TRUSTED_ORIGIN.
 const apiProxy = {
-  "/api": {
+  "^/api(/|$)": {
     target: API_ORIGIN,
     changeOrigin: false,
-    rewrite: (path: string) => path.replace(/^\/api/, ""),
+    rewrite: (path: string) => path.replace(/^\/api(?=\/|$)/, ""),
   },
 };
 
