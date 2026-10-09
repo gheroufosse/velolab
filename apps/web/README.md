@@ -33,6 +33,7 @@ Everything binds to loopback (`127.0.0.1`) only (ADR-025).
 
 Open the exact `http://127.0.0.1:5173` origin (not `localhost`): the API
 compares the browser `Origin` header with `AUTH_TRUSTED_ORIGIN` exactly.
+If you run `npm run preview` (`http://127.0.0.1:4173`), set `AUTH_TRUSTED_ORIGIN=http://127.0.0.1:4173`.
 
 ## Checks (same as CI)
 
