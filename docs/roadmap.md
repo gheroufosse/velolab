@@ -126,12 +126,14 @@ failure handling.
 
 ## Stage 3 — Frontend foundation
 
-- [ ] Vite + React + TypeScript app
-- [ ] Tailwind and base design tokens
-- [ ] TanStack Query client, typed API layer
-- [ ] Login screen, in-memory access token, silent refresh
-- [ ] Coordinate refresh across concurrent requests and browser tabs under ADR-021;
-  handle ambiguous network failures without blind token replay (ADR-023)
+- [x] Vite + React + TypeScript app (ADR-025 slice 1, PR #24)
+- [x] Tailwind (v4, dark-first); formal design tokens not yet defined
+- [x] TanStack Query client, typed API layer (partial: login, connection,
+  activities only)
+- [x] Login screen, in-memory access token, silent refresh
+- [x] Refresh coordinator with unit tests (`auth/coordinator.ts`); live
+  multi-tab/browser checks and lost-response handling not yet verified
+  (ADR-021/023)
 - [ ] Protected routing and clear login recovery after expiry/revocation
 
 **Done when.** Logging in from the browser reaches a protected page and
